@@ -1,0 +1,6 @@
+{
+  "name": "ATONIA AGENT - Autonomous Customer Operations Hub",
+  "description": "Enterprise multi-tenant autonomous AI customer service operations platform across Atonia Marketplace, Atonia Insurance, Eureka Banking, and Sorplos Insurtech.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
