@@ -4,7 +4,8 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { apiV1Router } from './src/server/routes/api.router.ts';
-import { connectMongo } from './src/server/db/mongodb.ts';
+import { connectMongo, closeMongo, getPersistenceMode } from './src/server/db/mongodb.ts';
+import { loadAndValidateConfig } from './src/server/config.ts';
 
 dotenv.config();
 
@@ -12,35 +13,32 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
-  const app = express();
+  // Validate environment configuration at server startup
+  const config = loadAndValidateConfig();
 
-  // Port 3000 & iFrame: Dev server must run on port 3000.
-  // In AI Studio container, process.env.PORT is 8080 (bound by Nginx).
-  // Therefore default to 3000 unless explicit --port argument is provided.
-  let PORT = 3000;
-  const portArgIndex = process.argv.indexOf('--port');
-  if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
-    const parsed = parseInt(process.argv[portArgIndex + 1], 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      PORT = parsed;
-    }
-  } else if (process.env.APP_PORT) {
-    PORT = parseInt(process.env.APP_PORT, 10);
-  }
+  const app = express();
+  const PORT = config.port;
 
   // JSON Body Parser
   app.use(express.json());
 
-  // Non-blocking MongoDB connection
-  connectMongo().catch((err) => {
-    console.warn('MongoDB connection fallback notice:', err);
-  });
+  // Connect to MongoDB Atlas if configured
+  if (config.mongoUri) {
+    try {
+      await connectMongo();
+      console.log(`[ATONIA AGENT] Persistence Mode: ${getPersistenceMode()}`);
+    } catch (err) {
+      console.warn('[ATONIA AGENT] Initial MongoDB connection notice:', err);
+    }
+  } else {
+    console.log(`[ATONIA AGENT] Persistence Mode: ${getPersistenceMode()}`);
+  }
 
   // Mount versioned REST API
   app.use('/api/v1', apiV1Router);
 
   // Mount Vite or static assets
-  if (process.env.NODE_ENV === 'production') {
+  if (config.nodeEnv === 'production') {
     const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
@@ -76,14 +74,28 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[ATONIA AGENT] Production Foundation running on http://0.0.0.0:${PORT}`);
     console.log(`  ➜  Local:   http://localhost:${PORT}/`);
     console.log(`  ➜  Network: http://0.0.0.0:${PORT}/`);
+    console.log(`  ➜  Persistence: ${getPersistenceMode()}`);
   });
+
+  // Graceful shutdown handling
+  const shutdown = async (signal: string) => {
+    console.log(`\n[ATONIA AGENT] Received ${signal}. Gracefully terminating server...`);
+    server.close(async () => {
+      await closeMongo();
+      console.log('[ATONIA AGENT] Server terminated cleanly.');
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 startServer().catch((err) => {
-  console.error('Fatal error starting Atonia Agent server:', err);
+  console.error('\x1b[31m%s\x1b[0m', 'Fatal error starting Atonia Agent server:', err);
   process.exit(1);
 });

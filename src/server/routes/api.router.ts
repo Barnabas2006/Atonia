@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
-import { store } from '../db/store.ts';
+import { repository } from '../db/repository.ts';
 import { BUSINESS_REGISTRY } from '../../constants/businesses.ts';
 import { aiGatewayService } from '../services/ai-gateway.service.ts';
 import { toolRegistryService, TOOL_REGISTRY } from '../services/tool-registry.service.ts';
 import { voiceAgentService } from '../services/voice-agent.service.ts';
+import { integrationsService } from '../services/integrations.service.ts';
+import { authService } from '../services/auth.service.ts';
+import { getPersistenceMode, isDbConnected, testMongoConnection } from '../db/mongodb.ts';
+import { getConfig } from '../config.ts';
 import type { BusinessId } from '../../types/index.ts';
 
 export const apiV1Router = Router();
@@ -13,29 +17,76 @@ export const apiV1Router = Router();
 // Health & Environment Telemetry
 // ----------------------------------------------------
 apiV1Router.get('/health', (req: Request, res: Response) => {
+  const config = getConfig();
+  const persistenceMode = getPersistenceMode();
+  const dbConnected = isDbConnected();
+
   res.json({
     status: 'nominal',
     timestamp: new Date().toISOString(),
     service: 'ATONIA AGENT Enterprise Orchestrator',
-    version: '2.4.9',
+    version: '2.5.0',
+    environment: config.nodeEnv,
+    persistence: {
+      engine: persistenceMode,
+      connected: dbConnected,
+      databaseName: config.mongoDbName,
+      isAtlasConfigured: config.isMongoConfigured,
+      modeLabel:
+        persistenceMode === 'mongodb_atlas'
+          ? 'MongoDB Atlas Cluster (Production Persistent)'
+          : 'DEVELOPMENT-ONLY IN-MEMORY FALLBACK (Non-persistent across restarts)'
+    },
     aiEngine: 'gemini-3.8-flash',
     uptime: process.uptime(),
     multiTenantNodes: 4
   });
 });
 
-// ----------------------------------------------------
-// Auth Routes
-// ----------------------------------------------------
-apiV1Router.get('/auth/me', (req: Request, res: Response) => {
-  const currentUser = store.users[0]; // Elena Vance by default
-  res.json({ user: currentUser });
+apiV1Router.get('/health/db-test', async (_req: Request, res: Response) => {
+  const result = await testMongoConnection();
+  const statusCode = result.success ? 200 : 503;
+  res.status(statusCode).json(result);
 });
 
-apiV1Router.post('/auth/login', (req: Request, res: Response) => {
-  const { email } = req.body;
-  const user = store.users.find((u) => u.email === email) || store.users[0];
-  res.json({ user, token: 'mock-session-token-v2' });
+// ----------------------------------------------------
+// Auth Routes (Secure Session & JWT Handling)
+// ----------------------------------------------------
+apiV1Router.get('/auth/me', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      const payload = authService.verifyToken(token);
+      if (payload) {
+        const user = await repository.getUserById(payload.sub);
+        if (user) {
+          return res.json({ user, authenticated: true });
+        }
+      }
+    }
+
+    const users = await repository.getUsers();
+    const defaultUser = users[0];
+    res.json({ user: defaultUser, authenticated: false });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Auth check failed';
+    res.status(500).json({ error: msg });
+  }
+});
+
+apiV1Router.post('/auth/login', async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    const users = await repository.getUsers();
+    const user = (email ? await repository.getUserByEmail(email) : null) || users[0];
+
+    const token = authService.createToken(user);
+    res.json({ user, token });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Login failed';
+    res.status(500).json({ error: msg });
+  }
 });
 
 // ----------------------------------------------------
@@ -56,143 +107,144 @@ apiV1Router.get('/businesses/:id', (req: Request, res: Response) => {
 // ----------------------------------------------------
 // Customers Context Routes
 // ----------------------------------------------------
-apiV1Router.get('/customers', (req: Request, res: Response) => {
-  const { businessId, search } = req.query;
-  let results = store.customers;
-
-  if (businessId && businessId !== 'ALL') {
-    results = results.filter((c) => c.businessId === businessId);
+apiV1Router.get('/customers', async (req: Request, res: Response) => {
+  try {
+    const { businessId, search } = req.query;
+    const customers = await repository.getCustomers({
+      businessId: typeof businessId === 'string' ? businessId : undefined,
+      search: typeof search === 'string' ? search : undefined
+    });
+    res.json({ customers });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query customers';
+    res.status(500).json({ error: msg });
   }
-
-  if (search && typeof search === 'string') {
-    const q = search.toLowerCase();
-    results = results.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        (c.accountNumber && c.accountNumber.toLowerCase().includes(q)) ||
-        (c.phone && c.phone.includes(q))
-    );
-  }
-
-  res.json({ customers: results });
 });
 
-apiV1Router.get('/customers/:id', (req: Request, res: Response) => {
-  const customer = store.customers.find((c) => c.id === req.params.id);
-  if (!customer) {
-    return res.status(404).json({ error: 'Customer not found' });
+apiV1Router.get('/customers/:id', async (req: Request, res: Response) => {
+  try {
+    const customer = await repository.getCustomerById(req.params.id);
+    if (!customer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    res.json({ customer });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to retrieve customer';
+    res.status(500).json({ error: msg });
   }
-  res.json({ customer });
 });
 
 // ----------------------------------------------------
 // Conversations Routes
 // ----------------------------------------------------
-apiV1Router.get('/conversations', (req: Request, res: Response) => {
-  const { businessId, channel, status, search } = req.query;
-  let list = store.conversations;
-
-  if (businessId && businessId !== 'ALL') {
-    list = list.filter((c) => c.businessId === businessId);
+apiV1Router.get('/conversations', async (req: Request, res: Response) => {
+  try {
+    const { businessId, channel, status, search } = req.query;
+    const conversations = await repository.getConversations({
+      businessId: typeof businessId === 'string' ? businessId : undefined,
+      channel: typeof channel === 'string' ? channel : undefined,
+      status: typeof status === 'string' ? status : undefined,
+      search: typeof search === 'string' ? search : undefined
+    });
+    res.json({ conversations });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query conversations';
+    res.status(500).json({ error: msg });
   }
-
-  if (channel && channel !== 'all') {
-    list = list.filter((c) => c.channel === channel);
-  }
-
-  if (status && status !== 'All Agent States') {
-    list = list.filter((c) => c.status === status);
-  }
-
-  if (search && typeof search === 'string') {
-    const q = search.toLowerCase();
-    list = list.filter(
-      (c) =>
-        c.customerName.toLowerCase().includes(q) ||
-        c.intent.toLowerCase().includes(q) ||
-        c.customerIdentifier.toLowerCase().includes(q)
-    );
-  }
-
-  res.json({ conversations: list });
 });
 
-apiV1Router.get('/conversations/:id', (req: Request, res: Response) => {
-  const conversation = store.conversations.find((c) => c.id === req.params.id);
-  if (!conversation) {
-    return res.status(404).json({ error: 'Conversation not found' });
-  }
+apiV1Router.get('/conversations/:id', async (req: Request, res: Response) => {
+  try {
+    const conversation = await repository.getConversationById(req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
 
-  const customer = store.customers.find((c) => c.id === conversation.customerId);
-  res.json({ conversation, customer });
+    const customer = await repository.getCustomerById(conversation.customerId);
+    res.json({ conversation, customer });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to retrieve conversation';
+    res.status(500).json({ error: msg });
+  }
 });
 
-apiV1Router.post('/conversations/:id/messages', (req: Request, res: Response) => {
-  const conversation = store.conversations.find((c) => c.id === req.params.id);
-  if (!conversation) {
-    return res.status(404).json({ error: 'Conversation not found' });
+apiV1Router.post('/conversations/:id/messages', async (req: Request, res: Response) => {
+  try {
+    const conversation = await repository.getConversationById(req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const { content, sender = 'supervisor', senderName = 'Elena Vance' } = req.body;
+    if (!content) {
+      return res.status(400).json({ error: 'Message content is required' });
+    }
+
+    const newMsg = {
+      id: `msg-${Date.now()}`,
+      conversationId: conversation.id,
+      sender,
+      senderName,
+      timestamp: 'Just now',
+      content
+    };
+
+    const updatedConversation = await repository.addMessage(conversation.id, newMsg);
+
+    // Persist audit record for supervisor intervention
+    if (sender === 'supervisor') {
+      await repository.appendAuditLog({
+        id: `aud-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        actor: senderName,
+        actorType: 'SUPERVISOR',
+        businessId: conversation.businessId,
+        customerId: conversation.customerId,
+        action: 'SUPERVISOR_MESSAGE_DISPATCH',
+        resource: `Conversation ${conversation.id}`,
+        result: 'SUCCESS',
+        detail: `Manual message sent by ${senderName} to ${conversation.customerName}.`
+      });
+    }
+
+    res.json({ success: true, message: newMsg, conversation: updatedConversation });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to append message';
+    res.status(500).json({ error: msg });
   }
+});
 
-  const { content, sender = 'supervisor', senderName = 'Elena Vance' } = req.body;
-  if (!content) {
-    return res.status(400).json({ error: 'Message content is required' });
-  }
+apiV1Router.post('/conversations/:id/takeover', async (req: Request, res: Response) => {
+  try {
+    const conversation = await repository.getConversationById(req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
 
-  const newMsg = {
-    id: `msg-${Date.now()}`,
-    conversationId: conversation.id,
-    sender,
-    senderName,
-    timestamp: 'Just now',
-    content
-  };
+    const { supervisorName = 'Elena Vance' } = req.body;
+    const updatedConversation = await repository.updateConversation(conversation.id, {
+      status: 'human_monitoring',
+      assignedAgent: supervisorName
+    });
 
-  conversation.messages.push(newMsg);
-  conversation.lastActivity = 'Just now';
-
-  // Audit supervisor intervention
-  if (sender === 'supervisor') {
-    store.auditLogs.unshift({
+    await repository.appendAuditLog({
       id: `aud-${Date.now()}`,
       timestamp: new Date().toISOString(),
-      actor: senderName,
+      actor: supervisorName,
       actorType: 'SUPERVISOR',
       businessId: conversation.businessId,
       customerId: conversation.customerId,
-      action: 'SUPERVISOR_MESSAGE_DISPATCH',
+      action: 'SESSION_CONTROL_SEIZED',
       resource: `Conversation ${conversation.id}`,
       result: 'SUCCESS',
-      detail: `Manual message sent by ${senderName} to ${conversation.customerName}.`
+      detail: `Autonomous AI halted. Operator ${supervisorName} seized direct sovereign control.`
     });
+
+    res.json({ success: true, conversation: updatedConversation });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to takeover conversation';
+    res.status(500).json({ error: msg });
   }
-
-  res.json({ success: true, message: newMsg, conversation });
-});
-
-apiV1Router.post('/conversations/:id/takeover', (req: Request, res: Response) => {
-  const conversation = store.conversations.find((c) => c.id === req.params.id);
-  if (!conversation) {
-    return res.status(404).json({ error: 'Conversation not found' });
-  }
-
-  const { supervisorName = 'Elena Vance' } = req.body;
-  conversation.status = 'human_monitoring';
-  conversation.assignedAgent = supervisorName;
-
-  store.auditLogs.unshift({
-    id: `aud-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    actor: supervisorName,
-    actorType: 'SUPERVISOR',
-    businessId: conversation.businessId,
-    customerId: conversation.customerId,
-    action: 'SESSION_CONTROL_SEIZED',
-    resource: `Conversation ${conversation.id}`,
-    result: 'SUCCESS',
-    detail: `Autonomous AI halted. Operator ${supervisorName} seized direct sovereign control.`
-  });
-
-  res.json({ success: true, conversation });
 });
 
 // ----------------------------------------------------
@@ -206,18 +258,20 @@ apiV1Router.post('/agent/process', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'conversationId, businessId, and message are required' });
     }
 
-    const conversation = store.conversations.find((c) => c.id === conversationId);
-    if (conversation) {
-      // Append customer message
-      conversation.messages.push({
-        id: `msg-${Date.now()}-c`,
-        conversationId,
-        sender: 'customer',
-        senderName: conversation.customerName,
-        timestamp: 'Just now',
-        content: message
-      });
+    const conversation = await repository.getConversationById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
     }
+
+    // Persist incoming customer message
+    await repository.addMessage(conversationId, {
+      id: `msg-${Date.now()}-c`,
+      conversationId,
+      sender: 'customer',
+      senderName: conversation.customerName,
+      timestamp: 'Just now',
+      content: message
+    });
 
     const gatewayResult = await aiGatewayService.processCustomerTurn({
       conversationId,
@@ -227,30 +281,31 @@ apiV1Router.post('/agent/process', async (req: Request, res: Response) => {
       channel
     });
 
-    if (conversation) {
-      conversation.status = gatewayResult.state;
-      conversation.intent = gatewayResult.intent;
-      conversation.lastActivity = 'Just now';
+    // Persist AI reply message
+    const updatedConversation = await repository.addMessage(conversationId, {
+      id: `msg-${Date.now()}-a`,
+      conversationId,
+      sender: 'agent',
+      senderName: 'Autonomous Agent',
+      timestamp: 'Just now',
+      content: gatewayResult.replyText,
+      aiMetadata: {
+        model: 'gemini-3.8-flash',
+        latencyMs: 320,
+        tokens: 42,
+        confidence: gatewayResult.confidence
+      },
+      governanceEvent: gatewayResult.governanceEvent
+    });
 
-      // Append AI response
-      conversation.messages.push({
-        id: `msg-${Date.now()}-a`,
-        conversationId,
-        sender: 'agent',
-        senderName: 'Autonomous Agent',
-        timestamp: 'Just now',
-        content: gatewayResult.replyText,
-        aiMetadata: {
-          model: 'gemini-3.8-flash',
-          latencyMs: 320,
-          tokens: 42,
-          confidence: gatewayResult.confidence
-        },
-        governanceEvent: gatewayResult.governanceEvent
-      });
-    }
+    // Update conversation state and intent
+    const finalConversation = await repository.updateConversation(conversationId, {
+      status: gatewayResult.state,
+      intent: gatewayResult.intent,
+      lastActivity: 'Just now'
+    });
 
-    res.json({ success: true, result: gatewayResult, conversation });
+    res.json({ success: true, result: gatewayResult, conversation: finalConversation });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown gateway processing error';
     res.status(500).json({ error: msg });
@@ -260,12 +315,24 @@ apiV1Router.post('/agent/process', async (req: Request, res: Response) => {
 // ----------------------------------------------------
 // Tools Routes
 // ----------------------------------------------------
-apiV1Router.get('/tools', (req: Request, res: Response) => {
-  const { businessId } = req.query;
-  if (businessId && typeof businessId === 'string' && businessId !== 'ALL') {
-    return res.json({ tools: toolRegistryService.getToolsForBusiness(businessId as BusinessId) });
+apiV1Router.get('/tools', async (req: Request, res: Response) => {
+  try {
+    const { businessId } = req.query;
+    const executions = await repository.getToolExecutions(
+      businessId && typeof businessId === 'string' && businessId !== 'ALL' ? { businessId } : undefined
+    );
+
+    if (businessId && typeof businessId === 'string' && businessId !== 'ALL') {
+      return res.json({
+        tools: toolRegistryService.getToolsForBusiness(businessId as BusinessId),
+        recentExecutions: executions
+      });
+    }
+    res.json({ tools: Object.values(TOOL_REGISTRY), recentExecutions: executions });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query tools';
+    res.status(500).json({ error: msg });
   }
-  res.json({ tools: Object.values(TOOL_REGISTRY), recentExecutions: store.toolExecutions });
 });
 
 apiV1Router.post('/tools/execute', async (req: Request, res: Response) => {
@@ -291,178 +358,226 @@ apiV1Router.post('/tools/execute', async (req: Request, res: Response) => {
 // ----------------------------------------------------
 // Escalation Center Routes
 // ----------------------------------------------------
-apiV1Router.get('/escalations', (req: Request, res: Response) => {
-  const { businessId, priority, status } = req.query;
-  let list = store.escalations;
+apiV1Router.get('/escalations', async (req: Request, res: Response) => {
+  try {
+    const { businessId, priority, status } = req.query;
+    const list = await repository.getEscalations({
+      businessId: typeof businessId === 'string' ? businessId : undefined,
+      priority: typeof priority === 'string' ? priority : undefined,
+      status: typeof status === 'string' ? status : undefined
+    });
 
-  if (businessId && businessId !== 'ALL') {
-    list = list.filter((e) => e.businessId === businessId);
+    const criticalCount = list.filter((e) => e.priority === 'critical').length;
+    const highCount = list.filter((e) => e.priority === 'high').length;
+    const mediumCount = list.filter((e) => e.priority === 'medium').length;
+
+    res.json({
+      escalations: list,
+      summary: {
+        critical: criticalCount,
+        high: highCount,
+        medium: mediumCount,
+        resolvedToday: 34
+      }
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query escalations';
+    res.status(500).json({ error: msg });
   }
-
-  if (priority && priority !== 'all') {
-    list = list.filter((e) => e.priority === priority);
-  }
-
-  if (status && status !== 'all') {
-    list = list.filter((e) => e.status === status);
-  }
-
-  res.json({ escalations: list, summary: { critical: 3, high: 4, medium: 8, resolvedToday: 34 } });
 });
 
-apiV1Router.get('/escalations/:id', (req: Request, res: Response) => {
-  const escalation = store.escalations.find((e) => e.id === req.params.id);
-  if (!escalation) {
-    return res.status(404).json({ error: 'Escalation docket not found' });
+apiV1Router.get('/escalations/:id', async (req: Request, res: Response) => {
+  try {
+    const escalation = await repository.getEscalationById(req.params.id);
+    if (!escalation) {
+      return res.status(404).json({ error: 'Escalation docket not found' });
+    }
+    res.json({ escalation });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to retrieve escalation';
+    res.status(500).json({ error: msg });
   }
-  res.json({ escalation });
 });
 
-apiV1Router.post('/escalations/:id/assign', (req: Request, res: Response) => {
-  const escalation = store.escalations.find((e) => e.id === req.params.id);
-  if (!escalation) {
-    return res.status(404).json({ error: 'Escalation docket not found' });
+apiV1Router.post('/escalations/:id/assign', async (req: Request, res: Response) => {
+  try {
+    const escalation = await repository.getEscalationById(req.params.id);
+    if (!escalation) {
+      return res.status(404).json({ error: 'Escalation docket not found' });
+    }
+
+    const { assignee = 'Elena Vance' } = req.body;
+    const updated = await repository.updateEscalation(escalation.id, {
+      assignedStaff: assignee,
+      status: 'in_review'
+    });
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: assignee,
+      actorType: 'SUPERVISOR',
+      businessId: escalation.businessId,
+      customerId: escalation.customerId,
+      action: 'ESCALATION_ASSIGNED',
+      resource: `Docket ${escalation.id}`,
+      result: 'SUCCESS',
+      detail: `Escalation assigned to ${assignee}. Status set to in_review.`
+    });
+
+    res.json({ success: true, escalation: updated });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to assign escalation';
+    res.status(500).json({ error: msg });
   }
-
-  const { assignee = 'Elena Vance' } = req.body;
-  escalation.assignedStaff = assignee;
-  escalation.status = 'in_review';
-
-  store.auditLogs.unshift({
-    id: `aud-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    actor: assignee,
-    actorType: 'SUPERVISOR',
-    businessId: escalation.businessId,
-    customerId: escalation.customerId,
-    action: 'ESCALATION_ASSIGNED',
-    resource: `Docket ${escalation.id}`,
-    result: 'SUCCESS',
-    detail: `Escalation assigned to ${assignee}. Status set to in_review.`
-  });
-
-  res.json({ success: true, escalation });
 });
 
-apiV1Router.post('/escalations/:id/resolve', (req: Request, res: Response) => {
-  const escalation = store.escalations.find((e) => e.id === req.params.id);
-  if (!escalation) {
-    return res.status(404).json({ error: 'Escalation docket not found' });
+apiV1Router.post('/escalations/:id/resolve', async (req: Request, res: Response) => {
+  try {
+    const escalation = await repository.getEscalationById(req.params.id);
+    if (!escalation) {
+      return res.status(404).json({ error: 'Escalation docket not found' });
+    }
+
+    const updated = await repository.updateEscalation(escalation.id, {
+      status: 'resolved',
+      resolvedAt: new Date().toISOString()
+    });
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: 'Elena Vance',
+      actorType: 'SUPERVISOR',
+      businessId: escalation.businessId,
+      customerId: escalation.customerId,
+      action: 'ESCALATION_RESOLVED',
+      resource: `Docket ${escalation.id}`,
+      result: 'SUCCESS',
+      detail: `Escalation docket ${escalation.id} resolved by Elena Vance.`
+    });
+
+    res.json({ success: true, escalation: updated });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to resolve escalation';
+    res.status(500).json({ error: msg });
   }
-
-  escalation.status = 'resolved';
-  escalation.resolvedAt = new Date().toISOString();
-
-  store.auditLogs.unshift({
-    id: `aud-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    actor: 'Elena Vance',
-    actorType: 'SUPERVISOR',
-    businessId: escalation.businessId,
-    customerId: escalation.customerId,
-    action: 'ESCALATION_RESOLVED',
-    resource: `Docket ${escalation.id}`,
-    result: 'SUCCESS',
-    detail: `Escalation docket ${escalation.id} resolved by Elena Vance.`
-  });
-
-  res.json({ success: true, escalation });
 });
 
-apiV1Router.post('/escalations/:id/notes', (req: Request, res: Response) => {
-  const escalation = store.escalations.find((e) => e.id === req.params.id);
-  if (!escalation) {
-    return res.status(404).json({ error: 'Escalation docket not found' });
+apiV1Router.post('/escalations/:id/notes', async (req: Request, res: Response) => {
+  try {
+    const escalation = await repository.getEscalationById(req.params.id);
+    if (!escalation) {
+      return res.status(404).json({ error: 'Escalation docket not found' });
+    }
+
+    const { notes } = req.body;
+    const updated = await repository.updateEscalation(escalation.id, {
+      supervisorNotes: notes
+    });
+
+    res.json({ success: true, escalation: updated });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to save escalation notes';
+    res.status(500).json({ error: msg });
   }
-
-  const { notes } = req.body;
-  escalation.supervisorNotes = notes;
-
-  res.json({ success: true, escalation });
 });
 
 // ----------------------------------------------------
 // Knowledge Base Routes
 // ----------------------------------------------------
-apiV1Router.get('/knowledge', (req: Request, res: Response) => {
-  const { businessId, search } = req.query;
-  let list = store.knowledgeDocs;
-
-  if (businessId && businessId !== 'ALL') {
-    list = list.filter((d) => d.businessId === businessId);
+apiV1Router.get('/knowledge', async (req: Request, res: Response) => {
+  try {
+    const { businessId, search } = req.query;
+    const list = await repository.getKnowledgeDocs({
+      businessId: typeof businessId === 'string' ? businessId : undefined,
+      search: typeof search === 'string' ? search : undefined
+    });
+    res.json({ documents: list });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query knowledge documents';
+    res.status(500).json({ error: msg });
   }
-
-  if (search && typeof search === 'string') {
-    const q = search.toLowerCase();
-    list = list.filter((d) => d.title.toLowerCase().includes(q) || d.summary.toLowerCase().includes(q));
-  }
-
-  res.json({ documents: list });
 });
 
 // ----------------------------------------------------
 // Audit Trail Routes
 // ----------------------------------------------------
-apiV1Router.get('/audit', (req: Request, res: Response) => {
-  const { businessId } = req.query;
-  let list = store.auditLogs;
-
-  if (businessId && businessId !== 'ALL') {
-    list = list.filter((a) => a.businessId === businessId);
+apiV1Router.get('/audit', async (req: Request, res: Response) => {
+  try {
+    const { businessId } = req.query;
+    const list = await repository.getAuditLogs({
+      businessId: typeof businessId === 'string' ? businessId : undefined
+    });
+    res.json({ auditLogs: list });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query audit trail';
+    res.status(500).json({ error: msg });
   }
-
-  res.json({ auditLogs: list });
 });
 
 // ----------------------------------------------------
 // Voice Telephony Routes
 // ----------------------------------------------------
-apiV1Router.get('/voice/sessions', (req: Request, res: Response) => {
-  res.json({
-    activeCallsCount: 18,
-    avgHandleTime: '2m 45s',
-    aiVoiceLatency: '320ms',
-    humanTransferRate: '4.8%',
-    callSentiment: '92% Positive',
-    sessions: store.voiceSessions
-  });
+apiV1Router.get('/voice/sessions', async (req: Request, res: Response) => {
+  try {
+    const sessions = await repository.getVoiceSessions();
+    res.json({
+      activeCallsCount: 18,
+      avgHandleTime: '2m 45s',
+      aiVoiceLatency: '320ms',
+      humanTransferRate: '4.8%',
+      callSentiment: '92% Positive',
+      sessions
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query voice sessions';
+    res.status(500).json({ error: msg });
+  }
 });
 
-apiV1Router.get('/voice/sessions/:id', (req: Request, res: Response) => {
-  const session = store.voiceSessions.find((s) => s.id === req.params.id);
-  if (!session) {
-    return res.status(404).json({ error: 'Voice session not found' });
+apiV1Router.get('/voice/sessions/:id', async (req: Request, res: Response) => {
+  try {
+    const session = await repository.getVoiceSessionById(req.params.id);
+    if (!session) {
+      return res.status(404).json({ error: 'Voice session not found' });
+    }
+    res.json({ session });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to retrieve voice session';
+    res.status(500).json({ error: msg });
   }
-  res.json({ session });
 });
 
-apiV1Router.post('/voice/sessions/:id/override', (req: Request, res: Response) => {
-  const { action, instruction } = req.body; // 'barge_in', 'whisper', 'terminate'
-  const session = store.voiceSessions.find((s) => s.id === req.params.id);
+apiV1Router.post('/voice/sessions/:id/override', async (req: Request, res: Response) => {
+  try {
+    const { action, instruction } = req.body;
+    const session = await repository.getVoiceSessionById(req.params.id);
 
-  if (!session) {
-    return res.status(404).json({ error: 'Voice session not found' });
+    if (!session) {
+      return res.status(404).json({ error: 'Voice session not found' });
+    }
+
+    const statusUpdate = action === 'terminate' ? 'completed' : action === 'barge_in' ? 'escalated' : session.status;
+    const updated = await repository.updateVoiceSession(session.id, { status: statusUpdate });
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: 'Elena Vance',
+      actorType: 'SUPERVISOR',
+      businessId: session.businessId,
+      action: `VOICE_${action.toUpperCase()}`,
+      resource: `Call Session ${session.id}`,
+      result: 'SUCCESS',
+      detail: `Supervisor executed ${action}: ${instruction || 'Direct operator override on SIP audio trunk'}.`
+    });
+
+    res.json({ success: true, session: updated });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Voice override error';
+    res.status(500).json({ error: msg });
   }
-
-  if (action === 'terminate') {
-    session.status = 'completed';
-  } else if (action === 'barge_in') {
-    session.status = 'escalated';
-  }
-
-  store.auditLogs.unshift({
-    id: `aud-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    actor: 'Elena Vance',
-    actorType: 'SUPERVISOR',
-    businessId: session.businessId,
-    action: `VOICE_${action.toUpperCase()}`,
-    resource: `Call Session ${session.id}`,
-    result: 'SUCCESS',
-    detail: `Supervisor executed ${action}: ${instruction || 'Direct operator override on SIP audio trunk'}.`
-  });
-
-  res.json({ success: true, session });
 });
 
 apiV1Router.post('/voice/talk', async (req: Request, res: Response) => {
@@ -488,28 +603,20 @@ apiV1Router.post('/voice/talk', async (req: Request, res: Response) => {
 // ----------------------------------------------------
 // Tasks Routes
 // ----------------------------------------------------
-apiV1Router.get('/tasks', (req: Request, res: Response) => {
-  res.json({ tasks: store.tasks });
+apiV1Router.get('/tasks', async (req: Request, res: Response) => {
+  try {
+    const tasks = await repository.getTasks();
+    res.json({ tasks });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query tasks';
+    res.status(500).json({ error: msg });
+  }
 });
 
 // ----------------------------------------------------
-// External Integrations Status Matrix
+// External Integrations Status Matrix (Honest Readiness Check)
 // ----------------------------------------------------
 apiV1Router.get('/integrations', (req: Request, res: Response) => {
-  const integrationsList = [
-    { id: 'int-1', name: 'DVLA Registry API', businessId: 'ATONIA_INSURANCE', status: 'connected', latencyMs: 28, lastCheck: '24s ago' },
-    { id: 'int-2', name: 'Underwriting Core v4', businessId: 'ATONIA_INSURANCE', status: 'connected', latencyMs: 110, lastCheck: '12s ago' },
-    { id: 'int-3', name: 'Acturis BMS API', businessId: 'ATONIA_INSURANCE', status: 'awaiting_credentials', latencyMs: null, lastCheck: 'Pending' },
-    { id: 'int-4', name: 'OpenBanking API', businessId: 'EUREKA', status: 'connected', latencyMs: 65, lastCheck: '45s ago' },
-    { id: 'int-5', name: 'Fraud Sentinel AI', businessId: 'EUREKA', status: 'connected', latencyMs: 38, lastCheck: '5s ago' },
-    { id: 'int-6', name: 'Plaid Gateway', businessId: 'EUREKA', status: 'connected', latencyMs: 120, lastCheck: '1m ago' },
-    { id: 'int-7', name: 'Card Processor Engine', businessId: 'EUREKA', status: 'awaiting_credentials', latencyMs: null, lastCheck: 'Pending' },
-    { id: 'int-8', name: 'ShipStation Sync', businessId: 'ATONIA_MARKETPLACE', status: 'connected', latencyMs: 140, lastCheck: '30s ago' },
-    { id: 'int-9', name: 'Amazon SP-API', businessId: 'ATONIA_MARKETPLACE', status: 'awaiting_credentials', latencyMs: null, lastCheck: 'Pending' },
-    { id: 'int-10', name: 'Carrier Aggregator (14)', businessId: 'SORPLOS_INSURTECH', status: 'connected', latencyMs: 320, lastCheck: '15s ago' },
-    { id: 'int-11', name: 'OCR Document Engine', businessId: 'SORPLOS_INSURTECH', status: 'connected', latencyMs: 180, lastCheck: '50s ago' },
-    { id: 'int-12', name: 'Stripe Corporate Billing', businessId: 'SHARED', status: 'connected', latencyMs: 95, lastCheck: '1m ago' }
-  ];
-
+  const integrationsList = integrationsService.getIntegrationsSummary();
   res.json({ integrations: integrationsList });
 });

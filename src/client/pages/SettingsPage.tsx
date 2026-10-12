@@ -11,7 +11,7 @@ export const SettingsPage: React.FC = () => {
       id: string;
       name: string;
       businessId: string;
-      status: 'connected' | 'awaiting_credentials';
+      status: 'connected' | 'awaiting_credentials' | 'not_configured' | 'configured' | 'error';
       latencyMs: number | null;
       lastCheck: string;
     }>
@@ -149,10 +149,22 @@ export const SettingsPage: React.FC = () => {
                 <span className="font-headline-sm text-sm text-on-surface">{int.name}</span>
                 <span
                   className={`px-2 py-0.5 rounded font-telemetry-badge uppercase text-[10px] ${
-                    int.status === 'connected' ? 'bg-tertiary-container/30 text-tertiary' : 'bg-primary/20 text-primary'
+                    int.status === 'connected'
+                      ? 'bg-tertiary-container/30 text-tertiary'
+                      : int.status === 'configured'
+                      ? 'bg-primary-container/40 text-primary font-semibold'
+                      : int.status === 'error'
+                      ? 'bg-error-container text-on-error font-semibold'
+                      : 'bg-surface-container-highest text-outline'
                   }`}
                 >
-                  {int.status === 'connected' ? 'Connected' : 'Awaiting Credentials'}
+                  {int.status === 'connected'
+                    ? 'Connected'
+                    : int.status === 'configured'
+                    ? 'Configured'
+                    : int.status === 'error'
+                    ? 'Error'
+                    : 'Not Configured'}
                 </span>
               </div>
               <div className="text-[11px] text-outline font-telemetry-mono">{int.businessId.replace('_', ' ')}</div>

@@ -54,7 +54,7 @@ export interface BusinessConfig {
   integrations: Array<{
     name: string;
     type: string;
-    status: 'connected' | 'awaiting_credentials' | 'simulated_boundary';
+    status: 'connected' | 'awaiting_credentials' | 'simulated_boundary' | 'not_configured' | 'configured' | 'error';
     latencyMs?: number;
   }>;
   activeIntents: string[];

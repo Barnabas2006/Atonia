@@ -1,5 +1,6 @@
 import type { BusinessId, ToolDefinition } from '../../types/index.ts';
-import { store } from '../db/store.ts';
+import { repository } from '../db/repository.ts';
+import { integrationsService } from './integrations.service.ts';
 
 export interface ToolExecutionInput {
   toolName: string;
@@ -180,7 +181,7 @@ export class ToolRegistryService {
     // External Integration check
     if (!tool.isExternalIntegrationLive) {
       const auditId = `aud-${Date.now()}`;
-      store.auditLogs.unshift({
+      await repository.appendAuditLog({
         id: auditId,
         timestamp: new Date().toISOString(),
         actor: input.actorId,
@@ -269,7 +270,7 @@ export class ToolRegistryService {
     }
 
     const auditId = `aud-${Date.now()}`;
-    store.auditLogs.unshift({
+    await repository.appendAuditLog({
       id: auditId,
       timestamp: new Date().toISOString(),
       actor: input.actorId,
@@ -283,7 +284,7 @@ export class ToolRegistryService {
       detail: `Tool ${input.toolName} executed successfully via ${tool.externalProvider}. Verified result logged.`
     });
 
-    store.toolExecutions.unshift({
+    await repository.recordToolExecution({
       id: `tool-ev-${Date.now()}`,
       toolName: input.toolName,
       businessId: input.businessId,

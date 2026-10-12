@@ -211,7 +211,7 @@ export async function fetchIntegrations(): Promise<{
     id: string;
     name: string;
     businessId: string;
-    status: 'connected' | 'awaiting_credentials';
+    status: 'connected' | 'awaiting_credentials' | 'not_configured' | 'configured' | 'error';
     latencyMs: number | null;
     lastCheck: string;
   }>;
