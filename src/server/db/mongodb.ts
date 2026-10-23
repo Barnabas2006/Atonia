@@ -45,7 +45,7 @@ export async function connectMongo(customUri?: string, customDbName?: string): P
       if (!client) {
         client = new MongoClient(uri, {
           maxPoolSize: 20,
-          minPoolSize: 2,
+          minPoolSize: 0,
           maxIdleTimeMS: 30000,
           serverSelectionTimeoutMS: 5000,
           connectTimeoutMS: 5000,
@@ -74,10 +74,16 @@ export async function connectMongo(customUri?: string, customDbName?: string): P
       return dbInstance;
     } catch (err) {
       isConnectedStatus = false;
-      console.warn(
-        `[MONGODB NOTICE] Could not establish connection to MongoDB at ${uri.replace(/:([^:@]+)@/, ':****@')}:`,
-        err instanceof Error ? err.message : err
-      );
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes('alert number 80') || errMsg.includes('tlsv1 alert internal error')) {
+        console.warn(
+          `[MONGODB NOTICE] MongoDB Atlas TLS handshake rejected (SSL alert number 80). Cause: Connecting IP is not whitelisted in Atlas Network Access. In MongoDB Atlas, go to Network Access -> Add IP Address -> Allow Access from Anywhere (0.0.0.0/0). Operating in persistent in-memory repository mode until Atlas IP access is enabled.`
+        );
+      } else {
+        console.warn(
+          `[MONGODB NOTICE] Could not establish connection to MongoDB at ${maskMongoUri(uri)}: ${errMsg}`
+        );
+      }
       return null;
     } finally {
       isConnecting = false;
@@ -222,8 +228,8 @@ export async function testMongoConnection(
   customUri?: string,
   customDbName?: string
 ): Promise<MongoConnectionTestResult> {
-  const uri = customUri || process.env.MONGODB_URI?.trim();
-  const dbName = customDbName || process.env.MONGODB_DB_NAME?.trim() || 'atonia_agent';
+  const uri = (customUri !== undefined ? customUri : process.env.MONGODB_URI)?.trim();
+  const dbName = (customDbName !== undefined ? customDbName : process.env.MONGODB_DB_NAME)?.trim() || 'atonia_agent';
 
   // 1. Check for presence of MONGODB_URI
   if (!uri) {
@@ -357,11 +363,15 @@ export async function testMongoConnection(
       errorLower.includes('timed out') ||
       errorLower.includes('server selection') ||
       errorLower.includes('econnrefused') ||
-      errorLower.includes('could not connect to any servers')
+      errorLower.includes('could not connect to any servers') ||
+      errorLower.includes('alert number 80') ||
+      errorLower.includes('tlsv1 alert internal error') ||
+      errorLower.includes('alert_internal_error') ||
+      errorLower.includes('ssl3_read_bytes')
     ) {
       category = 'NETWORK_OR_IP_WHITELIST';
       fix =
-        'In MongoDB Atlas, navigate to "Network Access" -> click "Add IP Address" -> choose "Allow Access from Anywhere" (0.0.0.0/0). Atlas blocks incoming connections by default until the IP is added to the Access List.';
+        'In MongoDB Atlas, navigate to Security -> "Network Access" -> click "Add IP Address" -> select "Allow Access from Anywhere" (0.0.0.0/0). Atlas terminates the TLS handshake with "SSL alert number 80" when incoming requests originate from IP addresses not present in the Atlas IP Access List.';
     } else if (errorLower.includes('not authorized') || errorLower.includes('unauthorized')) {
       category = 'DATABASE_PERMISSION_DENIED';
       fix =
