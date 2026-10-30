@@ -60,11 +60,13 @@ export class AiGatewayService {
     const conversation = await repository.getConversationById(req.conversationId);
     const customer = await repository.getCustomerById(req.customerId);
 
-    // Retrieve relevant knowledge for this business domain from repository
-    const relevantDocs = await repository.getKnowledgeDocs({ businessId: req.businessId });
+    // Retrieve approved, published knowledge for this business domain from repository
+    const allDocs = await repository.getKnowledgeDocs({ businessId: req.businessId });
+    const relevantDocs = allDocs.filter((d) => d.status === 'published');
 
     // Detect Intent and check governance rules
     const textLower = req.userMessage.toLowerCase();
+
 
     // 1. Check for Critical Escalation triggers per Business Requirements:
     if (req.businessId === 'ATONIA_INSURANCE') {

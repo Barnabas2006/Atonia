@@ -157,11 +157,16 @@ export async function initDatabaseIndexes(db: Db): Promise<void> {
     const kbCol = db.collection(COLLECTIONS.KNOWLEDGE_DOCS);
     await kbCol.createIndex({ id: 1 }, { unique: true });
     await kbCol.createIndex({ businessId: 1 });
+    await kbCol.createIndex({ businessId: 1, status: 1 });
+    await kbCol.createIndex({ status: 1, isPublic: 1 });
+    await kbCol.createIndex({ isFaq: 1 });
 
     // 10. Voice Sessions
     const voiceCol = db.collection(COLLECTIONS.VOICE_SESSIONS);
     await voiceCol.createIndex({ id: 1 }, { unique: true });
     await voiceCol.createIndex({ businessId: 1 });
+    await voiceCol.createIndex({ status: 1 });
+
 
     console.log('[MONGODB] All database collections and indexes initialized.');
   } catch (err) {

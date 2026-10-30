@@ -139,14 +139,39 @@ apiV1Router.get('/customers/:id', async (req: Request, res: Response) => {
 // ----------------------------------------------------
 apiV1Router.get('/conversations', async (req: Request, res: Response) => {
   try {
-    const { businessId, channel, status, search } = req.query;
+    const { businessId, channel, status, search, customerRef, dateFrom, dateTo, page, limit } = req.query;
+    const pageNum = page ? parseInt(String(page), 10) : undefined;
+    const limitNum = limit ? parseInt(String(limit), 10) : undefined;
+
     const conversations = await repository.getConversations({
       businessId: typeof businessId === 'string' ? businessId : undefined,
       channel: typeof channel === 'string' ? channel : undefined,
       status: typeof status === 'string' ? status : undefined,
-      search: typeof search === 'string' ? search : undefined
+      search: typeof search === 'string' ? search : undefined,
+      customerRef: typeof customerRef === 'string' ? customerRef : undefined,
+      dateFrom: typeof dateFrom === 'string' ? dateFrom : undefined,
+      dateTo: typeof dateTo === 'string' ? dateTo : undefined,
+      page: pageNum,
+      limit: limitNum
     });
-    res.json({ conversations });
+
+    const totalCount = await repository.countConversations({
+      businessId: typeof businessId === 'string' ? businessId : undefined,
+      channel: typeof channel === 'string' ? channel : undefined,
+      status: typeof status === 'string' ? status : undefined,
+      search: typeof search === 'string' ? search : undefined,
+      customerRef: typeof customerRef === 'string' ? customerRef : undefined
+    });
+
+    res.json({
+      conversations,
+      pagination: {
+        total: totalCount,
+        page: pageNum || 1,
+        limit: limitNum || totalCount,
+        totalPages: limitNum ? Math.ceil(totalCount / limitNum) : 1
+      }
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Failed to query conversations';
     res.status(500).json({ error: msg });
@@ -181,7 +206,7 @@ apiV1Router.post('/conversations/:id/messages', async (req: Request, res: Respon
     }
 
     const newMsg = {
-      id: `msg-${Date.now()}`,
+      id: req.body.id || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       conversationId: conversation.id,
       sender,
       senderName,
@@ -210,6 +235,146 @@ apiV1Router.post('/conversations/:id/messages', async (req: Request, res: Respon
     res.json({ success: true, message: newMsg, conversation: updatedConversation });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Failed to append message';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// Internal notes route (Restricted to internal staff)
+apiV1Router.post('/conversations/:id/internal-notes', async (req: Request, res: Response) => {
+  try {
+    // Check auth header if provided
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      const payload = authService.verifyToken(token);
+      if (payload && !authService.isInternalStaff(payload.role)) {
+        return res.status(403).json({ error: 'Forbidden: External clients cannot access or create internal notes.' });
+      }
+    }
+
+    const conversation = await repository.getConversationById(req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const { text, authorName = 'Elena Vance', authorId = 'USR-EV-802' } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'Note text is required' });
+    }
+
+    const newNote = {
+      id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      authorId,
+      authorName,
+      text: text.trim(),
+      createdAt: new Date().toISOString()
+    };
+
+    const updated = await repository.addInternalNote(conversation.id, newNote);
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: authorName,
+      actorType: 'SUPERVISOR',
+      businessId: conversation.businessId,
+      customerId: conversation.customerId,
+      action: 'INTERNAL_NOTE_RECORDED',
+      resource: `Conversation ${conversation.id}`,
+      result: 'SUCCESS',
+      detail: `Internal note recorded by ${authorName}.`
+    });
+
+    res.json({ success: true, note: newNote, conversation: updated });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to record internal note';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// Flag conversation for quality review
+apiV1Router.post('/conversations/:id/flag-review', async (req: Request, res: Response) => {
+  try {
+    const conversation = await repository.getConversationById(req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const { flagged = true, notes, rating, reviewerName = 'Elena Vance', reviewerId = 'USR-EV-802', category = 'ACCURACY' } = req.body;
+
+    const feedback = notes
+      ? {
+          id: `rev-${Date.now()}`,
+          reviewerId,
+          reviewerName,
+          rating: typeof rating === 'number' ? rating : 5,
+          notes,
+          category,
+          createdAt: new Date().toISOString()
+        }
+      : undefined;
+
+    const updated = await repository.flagConversationReview(conversation.id, flagged, feedback);
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: reviewerName,
+      actorType: 'SUPERVISOR',
+      businessId: conversation.businessId,
+      customerId: conversation.customerId,
+      action: flagged ? 'CONVERSATION_FLAGGED_REVIEW' : 'CONVERSATION_UNFLAGGED_REVIEW',
+      resource: `Conversation ${conversation.id}`,
+      result: 'SUCCESS',
+      detail: `Quality review flag set to ${flagged} by ${reviewerName}. Notes: ${notes || 'None'}`
+    });
+
+    res.json({ success: true, conversation: updated });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to update review flag';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// Draft knowledge entry from conversation transcript
+apiV1Router.post('/conversations/:id/draft-knowledge', async (req: Request, res: Response) => {
+  try {
+    const conversation = await repository.getConversationById(req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const { title, topic = 'Operational Procedure', category = 'Conversation Learnings', draftContent, authorName = 'Elena Vance' } = req.body;
+    if (!title || !draftContent) {
+      return res.status(400).json({ error: 'title and draftContent are required to formulate a draft knowledge entry.' });
+    }
+
+    const draftDoc = await repository.draftKnowledgeFromConversation(
+      conversation.id,
+      title,
+      topic,
+      category,
+      conversation.businessId,
+      draftContent,
+      authorName
+    );
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: authorName,
+      actorType: 'SUPERVISOR',
+      businessId: conversation.businessId,
+      customerId: conversation.customerId,
+      action: 'KNOWLEDGE_ENTRY_DRAFTED',
+      resource: `Doc ${draftDoc.id}`,
+      result: 'SUCCESS',
+      detail: `Knowledge entry "${title}" drafted from conversation ${conversation.id}. Status: DRAFT (Pending Human Approval).`
+    });
+
+    res.status(201).json({ success: true, document: draftDoc });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to draft knowledge from conversation';
     res.status(500).json({ error: msg });
   }
 });
@@ -246,6 +411,7 @@ apiV1Router.post('/conversations/:id/takeover', async (req: Request, res: Respon
     res.status(500).json({ error: msg });
   }
 });
+
 
 // ----------------------------------------------------
 // AI Gateway Customer Turn Processor
@@ -484,14 +650,35 @@ apiV1Router.post('/escalations/:id/notes', async (req: Request, res: Response) =
 });
 
 // ----------------------------------------------------
-// Knowledge Base Routes
+// Knowledge Base Routes (Internal & Sovereign Management)
 // ----------------------------------------------------
 apiV1Router.get('/knowledge', async (req: Request, res: Response) => {
   try {
-    const { businessId, search } = req.query;
+    const { businessId, search, status, category, topic, isFaq, isPublic } = req.query;
+
+    // Check if requester is external client
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      const payload = authService.verifyToken(token);
+      if (payload && authService.isExternalClient(payload.role)) {
+        // Enforce strict external client boundary: ONLY published and public knowledge
+        const publicDocs = await repository.getPublicKnowledge({
+          businessId: typeof businessId === 'string' ? businessId : undefined,
+          search: typeof search === 'string' ? search : undefined
+        });
+        return res.json({ documents: publicDocs });
+      }
+    }
+
     const list = await repository.getKnowledgeDocs({
       businessId: typeof businessId === 'string' ? businessId : undefined,
-      search: typeof search === 'string' ? search : undefined
+      search: typeof search === 'string' ? search : undefined,
+      status: typeof status === 'string' ? status : undefined,
+      category: typeof category === 'string' ? category : undefined,
+      topic: typeof topic === 'string' ? topic : undefined,
+      isFaq: isFaq !== undefined ? isFaq === 'true' : undefined,
+      isPublic: isPublic !== undefined ? isPublic === 'true' : undefined
     });
     res.json({ documents: list });
   } catch (err: unknown) {
@@ -500,11 +687,222 @@ apiV1Router.get('/knowledge', async (req: Request, res: Response) => {
   }
 });
 
+apiV1Router.get('/knowledge/:id', async (req: Request, res: Response) => {
+  try {
+    const doc = await repository.getKnowledgeDocById(req.params.id);
+    if (!doc) {
+      return res.status(404).json({ error: 'Knowledge document not found' });
+    }
+
+    // External client check: must be published and public
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      const payload = authService.verifyToken(token);
+      if (payload && authService.isExternalClient(payload.role)) {
+        if (doc.status !== 'published' || !doc.isPublic) {
+          return res.status(403).json({ error: 'Forbidden: External clients cannot access unpublished or internal knowledge documents.' });
+        }
+      }
+    }
+
+    res.json({ document: doc });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to retrieve knowledge document';
+    res.status(500).json({ error: msg });
+  }
+});
+
+apiV1Router.post('/knowledge', async (req: Request, res: Response) => {
+  try {
+    const { businessId, title, category, topic, summary, content, author = 'Elena Vance', isFaq = false, faqQuestion, faqAnswer, isPublic = false, status = 'draft' } = req.body;
+
+    if (!businessId || !title || !content) {
+      return res.status(400).json({ error: 'businessId, title, and content are required' });
+    }
+
+    const created = await repository.createKnowledgeDoc({
+      businessId,
+      title,
+      category: category || 'General Operations',
+      topic: topic || 'General',
+      summary: summary || title,
+      content,
+      version: 'v1.0.0',
+      status: status || 'draft',
+      lastUpdated: new Date().toISOString().split('T')[0],
+      author,
+      isFaq,
+      faqQuestion,
+      faqAnswer,
+      isPublic
+    });
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: author,
+      actorType: 'SUPERVISOR',
+      businessId,
+      action: 'KNOWLEDGE_ENTRY_CREATED',
+      resource: `Doc ${created.id}`,
+      result: 'SUCCESS',
+      detail: `Created knowledge doc "${title}". Status: ${status.toUpperCase()}.`
+    });
+
+    res.status(201).json({ success: true, document: created });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to create knowledge document';
+    res.status(500).json({ error: msg });
+  }
+});
+
+apiV1Router.put('/knowledge/:id', async (req: Request, res: Response) => {
+  try {
+    const { editorName = 'Elena Vance', ...patch } = req.body;
+    const updated = await repository.updateKnowledgeDoc(req.params.id, patch, editorName);
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: editorName,
+      actorType: 'SUPERVISOR',
+      businessId: updated.businessId,
+      action: 'KNOWLEDGE_ENTRY_MODIFIED',
+      resource: `Doc ${updated.id}`,
+      result: 'SUCCESS',
+      detail: `Modified knowledge doc "${updated.title}" by ${editorName}.`
+    });
+
+    res.json({ success: true, document: updated });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to update knowledge document';
+    res.status(500).json({ error: msg });
+  }
+});
+
+apiV1Router.post('/knowledge/:id/publish', async (req: Request, res: Response) => {
+  try {
+    const { approverName = 'Elena Vance' } = req.body;
+    const published = await repository.publishKnowledgeDoc(req.params.id, approverName);
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: approverName,
+      actorType: 'SUPERVISOR',
+      businessId: published.businessId,
+      action: 'KNOWLEDGE_ENTRY_PUBLISHED',
+      resource: `Doc ${published.id}`,
+      result: 'SUCCESS',
+      detail: `Approved and published knowledge doc "${published.title}" for autonomous AI grounding.`
+    });
+
+    res.json({ success: true, document: published });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to publish knowledge document';
+    res.status(500).json({ error: msg });
+  }
+});
+
+apiV1Router.post('/knowledge/:id/archive', async (req: Request, res: Response) => {
+  try {
+    const archived = await repository.archiveKnowledgeDoc(req.params.id);
+
+    await repository.appendAuditLog({
+      id: `aud-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actor: 'Elena Vance',
+      actorType: 'SUPERVISOR',
+      businessId: archived.businessId,
+      action: 'KNOWLEDGE_ENTRY_ARCHIVED',
+      resource: `Doc ${archived.id}`,
+      result: 'SUCCESS',
+      detail: `Archived knowledge doc "${archived.title}". Removed from active AI grounding.`
+    });
+
+    res.json({ success: true, document: archived });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to archive knowledge document';
+    res.status(500).json({ error: msg });
+  }
+});
+
 // ----------------------------------------------------
-// Audit Trail Routes
+// Public External Client Access (Phase 6 Read-Only Boundary)
+// ----------------------------------------------------
+apiV1Router.get('/public/knowledge', async (req: Request, res: Response) => {
+  try {
+    const { businessId, search } = req.query;
+    const publicDocs = await repository.getPublicKnowledge({
+      businessId: typeof businessId === 'string' ? businessId : undefined,
+      search: typeof search === 'string' ? search : undefined
+    });
+
+    res.json({
+      status: 'success',
+      total: publicDocs.length,
+      documents: publicDocs.map((d) => ({
+        id: d.id,
+        businessId: d.businessId,
+        title: d.title,
+        category: d.category,
+        topic: d.topic,
+        summary: d.summary,
+        content: d.content,
+        isFaq: Boolean(d.isFaq),
+        faqQuestion: d.faqQuestion,
+        faqAnswer: d.faqAnswer,
+        lastUpdated: d.lastUpdated
+      }))
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query public knowledge';
+    res.status(500).json({ error: msg });
+  }
+});
+
+apiV1Router.get('/public/faqs', async (req: Request, res: Response) => {
+  try {
+    const { businessId } = req.query;
+    const publicDocs = await repository.getPublicKnowledge({
+      businessId: typeof businessId === 'string' ? businessId : undefined
+    });
+    const faqs = publicDocs.filter((d) => d.isFaq);
+
+    res.json({
+      businessId: businessId || 'ALL',
+      count: faqs.length,
+      faqs: faqs.map((f) => ({
+        id: f.id,
+        businessId: f.businessId,
+        question: f.faqQuestion || f.title,
+        answer: f.faqAnswer || f.content,
+        category: f.category,
+        topic: f.topic
+      }))
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to query public FAQs';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ----------------------------------------------------
+// Audit Trail Routes (Staff Restricted)
 // ----------------------------------------------------
 apiV1Router.get('/audit', async (req: Request, res: Response) => {
   try {
+    // Check if requester is external client
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      const payload = authService.verifyToken(token);
+      if (payload && authService.isExternalClient(payload.role)) {
+        return res.status(403).json({ error: 'Forbidden: External clients are prohibited from accessing audit logs.' });
+      }
+    }
+
     const { businessId } = req.query;
     const list = await repository.getAuditLogs({
       businessId: typeof businessId === 'string' ? businessId : undefined
@@ -515,6 +913,7 @@ apiV1Router.get('/audit', async (req: Request, res: Response) => {
     res.status(500).json({ error: msg });
   }
 });
+
 
 // ----------------------------------------------------
 // Voice Telephony Routes

@@ -29,16 +29,30 @@ export async function fetchConversations(params?: {
   channel?: string;
   status?: string;
   search?: string;
-}): Promise<{ conversations: Conversation[] }> {
+  customerRef?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  limit?: number;
+}): Promise<{
+  conversations: Conversation[];
+  pagination?: { total: number; page: number; limit: number; totalPages: number };
+}> {
   const query = new URLSearchParams();
   if (params?.businessId) query.set('businessId', params.businessId);
   if (params?.channel) query.set('channel', params.channel);
   if (params?.status) query.set('status', params.status);
   if (params?.search) query.set('search', params.search);
+  if (params?.customerRef) query.set('customerRef', params.customerRef);
+  if (params?.dateFrom) query.set('dateFrom', params.dateFrom);
+  if (params?.dateTo) query.set('dateTo', params.dateTo);
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.limit) query.set('limit', String(params.limit));
 
   const res = await fetch(`${API_BASE}/conversations?${query.toString()}`);
   return res.json();
 }
+
 
 export async function fetchConversationById(id: string): Promise<{ conversation: Conversation; customer?: CustomerContext }> {
   const res = await fetch(`${API_BASE}/conversations/${id}`);
@@ -143,14 +157,139 @@ export async function executeTool(payload: {
   return res.json();
 }
 
-export async function fetchKnowledge(businessId?: string, search?: string): Promise<{ documents: KnowledgeDocument[] }> {
+export async function postInternalNote(
+  conversationId: string,
+  text: string,
+  authorName = 'Elena Vance'
+): Promise<{ success: boolean; conversation: Conversation }> {
+  const res = await fetch(`${API_BASE}/conversations/${conversationId}/internal-notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, authorName })
+  });
+  return res.json();
+}
+
+export async function flagConversationReview(
+  conversationId: string,
+  flagged: boolean,
+  notes?: string,
+  rating?: number,
+  reviewerName = 'Elena Vance'
+): Promise<{ success: boolean; conversation: Conversation }> {
+  const res = await fetch(`${API_BASE}/conversations/${conversationId}/flag-review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flagged, notes, rating, reviewerName })
+  });
+  return res.json();
+}
+
+export async function draftKnowledgeFromConversation(
+  conversationId: string,
+  title: string,
+  topic: string,
+  category: string,
+  draftContent: string,
+  authorName = 'Elena Vance'
+): Promise<{ success: boolean; document: KnowledgeDocument }> {
+  const res = await fetch(`${API_BASE}/conversations/${conversationId}/draft-knowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, topic, category, draftContent, authorName })
+  });
+  return res.json();
+}
+
+export async function fetchKnowledge(params?: {
+  businessId?: string;
+  search?: string;
+  status?: string;
+  category?: string;
+  topic?: string;
+  isFaq?: boolean;
+}): Promise<{ documents: KnowledgeDocument[] }> {
   const query = new URLSearchParams();
-  if (businessId) query.set('businessId', businessId);
-  if (search) query.set('search', search);
+  if (params?.businessId) query.set('businessId', params.businessId);
+  if (params?.search) query.set('search', params.search);
+  if (params?.status) query.set('status', params.status);
+  if (params?.category) query.set('category', params.category);
+  if (params?.topic) query.set('topic', params.topic);
+  if (params?.isFaq !== undefined) query.set('isFaq', String(params.isFaq));
 
   const res = await fetch(`${API_BASE}/knowledge?${query.toString()}`);
   return res.json();
 }
+
+export async function createKnowledgeDoc(payload: {
+  businessId: BusinessId;
+  title: string;
+  category?: string;
+  topic?: string;
+  summary?: string;
+  content: string;
+  author?: string;
+  isFaq?: boolean;
+  faqQuestion?: string;
+  faqAnswer?: string;
+  isPublic?: boolean;
+  status?: 'published' | 'draft' | 'archived';
+}): Promise<{ success: boolean; document: KnowledgeDocument }> {
+  const res = await fetch(`${API_BASE}/knowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  return res.json();
+}
+
+export async function updateKnowledgeDoc(
+  id: string,
+  patch: Partial<KnowledgeDocument>,
+  editorName = 'Elena Vance'
+): Promise<{ success: boolean; document: KnowledgeDocument }> {
+  const res = await fetch(`${API_BASE}/knowledge/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...patch, editorName })
+  });
+  return res.json();
+}
+
+export async function publishKnowledgeDoc(id: string, approverName = 'Elena Vance'): Promise<{ success: boolean; document: KnowledgeDocument }> {
+  const res = await fetch(`${API_BASE}/knowledge/${id}/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approverName })
+  });
+  return res.json();
+}
+
+export async function archiveKnowledgeDoc(id: string): Promise<{ success: boolean; document: KnowledgeDocument }> {
+  const res = await fetch(`${API_BASE}/knowledge/${id}/archive`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  return res.json();
+}
+
+export async function fetchPublicKnowledge(businessId?: string, search?: string): Promise<{ status: string; total: number; documents: KnowledgeDocument[] }> {
+  const query = new URLSearchParams();
+  if (businessId) query.set('businessId', businessId);
+  if (search) query.set('search', search);
+
+  const res = await fetch(`${API_BASE}/public/knowledge?${query.toString()}`);
+  return res.json();
+}
+
+export async function fetchPublicFaqs(businessId?: string): Promise<{ businessId: string; count: number; faqs: Array<{ id: string; question: string; answer: string; category: string; topic?: string }> }> {
+  const query = new URLSearchParams();
+  if (businessId) query.set('businessId', businessId);
+
+  const res = await fetch(`${API_BASE}/public/faqs?${query.toString()}`);
+  return res.json();
+}
+
 
 export async function fetchAuditLogs(businessId?: string): Promise<{ auditLogs: AuditLogEntry[] }> {
   const url = businessId && businessId !== 'ALL' ? `${API_BASE}/audit?businessId=${businessId}` : `${API_BASE}/audit`;
@@ -192,6 +331,8 @@ export async function talkToVoiceAgent(payload: {
   voiceName: string;
   latencyMs: number;
   intent: string;
+  sourcesUsed?: string[];
+  businessId?: string;
 }> {
   const res = await fetch(`${API_BASE}/voice/talk`, {
     method: 'POST',

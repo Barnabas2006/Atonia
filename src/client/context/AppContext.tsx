@@ -12,7 +12,8 @@ export type AppRoute =
   | 'knowledge'
   | 'analytics'
   | 'audit-logs'
-  | 'settings';
+  | 'settings'
+  | 'client-portal';
 
 interface AppContextType {
   currentRoute: AppRoute;

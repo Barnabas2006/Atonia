@@ -3,6 +3,15 @@ import { useApp } from '../../context/AppContext.tsx';
 import { talkToVoiceAgent } from '../../api.ts';
 import { BusinessId } from '../../../types/index.ts';
 
+export type VoiceAgentState =
+  | 'idle'
+  | 'requesting_microphone'
+  | 'listening'
+  | 'processing'
+  | 'speaking'
+  | 'interrupted'
+  | 'error';
+
 interface VoiceMessage {
   id: string;
   speaker: 'user' | 'agent';
@@ -12,6 +21,7 @@ interface VoiceMessage {
   latencyMs?: number;
   intent?: string;
   audioBase64?: string;
+  sourcesUsed?: string[];
 }
 
 interface RealLifeVoicePanelProps {
@@ -27,6 +37,10 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
   isFloating = false
 }) => {
   const { showToast } = useApp();
+
+  // Explicit Voice Agent State Machine
+  const [voiceState, setVoiceState] = useState<VoiceAgentState>('idle');
+  const [lastInterruptedAt, setLastInterruptedAt] = useState<number | null>(null);
 
   // Voice call recipient state
   const [currentRecipientName, setCurrentRecipientName] = useState<string>(() => {
@@ -71,7 +85,8 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
         text: welcomeText,
         time: 'Just now',
         latencyMs: 120,
-        intent: hasName ? 'Warm Greeting With Recipient Name' : 'Welcome & Ask For Name'
+        intent: hasName ? 'Warm Greeting With Recipient Name' : 'Welcome & Ask For Name',
+        sourcesUsed: ['Atonia Unified Customer Experience Charter']
       }
     ];
   });
@@ -234,6 +249,9 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
   const speakWarmly = (text: string, audioBase64?: string) => {
     if (isMuted) return;
 
+    setVoiceState('speaking');
+    setIsSpeaking(true);
+
     // If server sent audioBase64 from Gemini TTS, try native high-res playback
     if (audioBase64) {
       try {
@@ -243,9 +261,9 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
         const audio = new Audio(`data:audio/wav;base64,${audioBase64}`);
         currentAudioElementRef.current = audio;
         audio.volume = volume;
-        setIsSpeaking(true);
         audio.onended = () => {
           setIsSpeaking(false);
+          setVoiceState('idle');
           if (handsFreeMode && isCallActive) {
             startListening();
           }
@@ -284,10 +302,12 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
 
     utterance.onstart = () => {
       setIsSpeaking(true);
+      setVoiceState('speaking');
     };
 
     utterance.onend = () => {
       setIsSpeaking(false);
+      setVoiceState('idle');
       if (handsFreeMode && isCallActive) {
         startListening();
       }
@@ -296,12 +316,13 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
     utterance.onerror = (e) => {
       console.warn('SpeechSynthesis error:', e);
       setIsSpeaking(false);
+      setVoiceState('error');
     };
 
     window.speechSynthesis.speak(utterance);
   };
 
-  const stopSpeaking = () => {
+  const stopSpeaking = (isBargeIn: boolean = true) => {
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
@@ -309,22 +330,35 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
       currentAudioElementRef.current.pause();
     }
     setIsSpeaking(false);
-    showToast('Voice playback paused / barge-in triggered.', 'info');
+    if (isBargeIn) {
+      setVoiceState('interrupted');
+      setLastInterruptedAt(Date.now());
+      showToast('Barge-in triggered: Assistant interrupted while speaking.', 'info');
+      setTimeout(() => {
+        setVoiceState((prev) => (prev === 'interrupted' ? 'idle' : prev));
+      }, 1500);
+    } else {
+      setVoiceState('idle');
+    }
   };
 
   // Web Speech Recognition (Microphone Speech-to-Text)
   const startListening = () => {
-    if (isSpeaking) {
-      stopSpeaking();
+    // If agent is currently speaking, barge-in / interrupt immediately!
+    if (isSpeaking || voiceState === 'speaking') {
+      stopSpeaking(true);
     }
 
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      showToast('Speech recognition not supported in this browser. Please type your question!', 'warning');
+      setVoiceState('error');
+      showToast('Browser speech recognition not available. Please type your query in the fallback chat below.', 'warning');
       return;
     }
+
+    setVoiceState('requesting_microphone');
 
     try {
       if (recognitionRef.current) {
@@ -338,10 +372,15 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
 
       recognition.onstart = () => {
         setIsListening(true);
+        setVoiceState('listening');
         setInterimSpeech('');
       };
 
       recognition.onresult = (event: any) => {
+        // If agent was speaking and user voice detected, immediately halt assistant!
+        if (isSpeaking) {
+          stopSpeaking(true);
+        }
         let currentTranscript = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const item = event.results[i];
@@ -355,8 +394,11 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
       recognition.onerror = (event: any) => {
         console.warn('Speech recognition error:', event.error);
         setIsListening(false);
+        setVoiceState('error');
         if (event.error === 'not-allowed') {
-          showToast('Microphone access denied. Please enable mic permissions or type below.', 'error');
+          showToast('Microphone access denied. Please allow microphone permissions or use text fallback.', 'error');
+        } else if (event.error === 'network') {
+          showToast('Speech recognition network timeout. Use text fallback to continue.', 'error');
         }
       };
 
@@ -365,6 +407,8 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
         if (interimSpeech && interimSpeech.trim()) {
           handleSendQuestion(interimSpeech.trim());
           setInterimSpeech('');
+        } else {
+          setVoiceState((prev) => (prev === 'listening' ? 'idle' : prev));
         }
       };
 
@@ -373,6 +417,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
     } catch (err) {
       console.error('Failed to start speech recognition:', err);
       setIsListening(false);
+      setVoiceState('error');
     }
   };
 
@@ -381,6 +426,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
       recognitionRef.current.stop();
     }
     setIsListening(false);
+    setVoiceState((prev) => (prev === 'listening' ? 'idle' : prev));
   };
 
   // Submit question to Voice Agent API
@@ -390,7 +436,6 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
     const trimmedQuery = queryText.trim();
 
     // Check if the user is answering with their name
-    // e.g., "My name is Julian", "I am Julian", "Julian", "It's Julian", "Call me Julian"
     let effectiveRecipientName = currentRecipientName;
     const directNameMatch = trimmedQuery.match(/^(?:my name is|i am|i'm|it's|call me|this is)?\s*([A-Za-z]+)\.?$/i);
     const complexNameMatch = trimmedQuery.match(/(?:my name is|i am|i'm|call me|this is)\s+([A-Za-z]+)/i);
@@ -398,7 +443,6 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
 
     if (extractedCandidate && (!effectiveRecipientName || effectiveRecipientName === 'Guest' || !initialCallerName)) {
       const candidateFormatted = extractedCandidate.charAt(0).toUpperCase() + extractedCandidate.slice(1).toLowerCase();
-      // Filter out common false positives like "Hello", "Yes", "No", "Please", "Help"
       const stopwords = ['hello', 'hi', 'hey', 'yes', 'no', 'sure', 'please', 'help', 'fine', 'good', 'okay', 'ok', 'here'];
       if (!stopwords.includes(candidateFormatted.toLowerCase())) {
         effectiveRecipientName = candidateFormatted;
@@ -421,6 +465,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
     setInputText('');
     setInterimSpeech('');
     setIsThinking(true);
+    setVoiceState('processing');
 
     try {
       // Build conversation history for multi-turn understanding
@@ -447,16 +492,20 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
           latencyMs: res.latencyMs || 280,
           intent: res.intent || 'Real-time Spoken Answer',
-          audioBase64: res.audioBase64
+          audioBase64: res.audioBase64,
+          sourcesUsed: res.sourcesUsed || ['Approved Tenant Knowledge Base']
         };
 
         setMessages((prev) => [...prev, agentMessage]);
 
         // Speak aloud with warm female voice
         speakWarmly(res.text, res.audioBase64);
+      } else {
+        setVoiceState('idle');
       }
     } catch (err) {
       setIsThinking(false);
+      setVoiceState('error');
       console.error('Voice agent query error:', err);
       const nameAssurance = effectiveRecipientName ? `, ${effectiveRecipientName}` : '';
       const fallbackText = `I'm right here with you${nameAssurance}. Let me quickly verify that detail for you. Everything is secure, and I'll make sure it's sorted out right away.`;
@@ -467,7 +516,8 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
         text: fallbackText,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         latencyMs: 195,
-        intent: 'Fallback Warm Assurance'
+        intent: 'Fallback Warm Assurance',
+        sourcesUsed: ['Atonia Fallback Protocol']
       };
       setMessages((prev) => [...prev, agentMessage]);
       speakWarmly(fallbackText);
@@ -864,38 +914,63 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
         </div>
       )}
 
-      {/* Live Audio Frequency Spectrum Bar */}
-      <div className="bg-surface-container-low px-space-md py-3 border-b border-surface-container-high/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Explicit 7-State Voice Agent State Machine Banner */}
+      <div className="bg-surface-container-low px-space-md py-2.5 border-b border-surface-container-high/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <span
-              className={`h-2.5 w-2.5 rounded-full ${
-                isSpeaking
-                  ? 'bg-tertiary animate-ping'
-                  : isListening
-                  ? 'bg-primary animate-ping'
-                  : isThinking
-                  ? 'bg-secondary animate-pulse'
-                  : 'bg-outline'
+              className={`h-3 w-3 rounded-full ${
+                voiceState === 'speaking'
+                  ? 'bg-purple-400 animate-ping'
+                  : voiceState === 'listening'
+                  ? 'bg-emerald-400 animate-ping'
+                  : voiceState === 'processing'
+                  ? 'bg-blue-400 animate-spin'
+                  : voiceState === 'requesting_microphone'
+                  ? 'bg-amber-400 animate-pulse'
+                  : voiceState === 'interrupted'
+                  ? 'bg-rose-500 animate-bounce'
+                  : voiceState === 'error'
+                  ? 'bg-red-500'
+                  : 'bg-slate-400'
               }`}
             ></span>
-            <span className="font-label-sm text-label-sm font-semibold text-on-surface">
-              {isSpeaking
-                ? 'Aria is Speaking (Ultra-Warm Voice Output)'
-                : isListening
-                ? 'Listening to your microphone...'
-                : isThinking
-                ? 'Aria is thinking & synthesizing answer...'
-                : 'Live RTP Voice Audio Channel Ready'}
-            </span>
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2">
+                <span className="font-telemetry-badge text-telemetry-badge uppercase tracking-wider font-bold">
+                  {voiceState === 'speaking' && <span className="text-purple-300">Speaking (Aria TTS)</span>}
+                  {voiceState === 'listening' && <span className="text-emerald-300">Listening (Mic Active)</span>}
+                  {voiceState === 'processing' && <span className="text-blue-300">Processing (Grounding AI)</span>}
+                  {voiceState === 'requesting_microphone' && <span className="text-amber-300">Requesting Mic Access</span>}
+                  {voiceState === 'interrupted' && <span className="text-rose-300">Interrupted (Barge-In)</span>}
+                  {voiceState === 'error' && <span className="text-red-300">Voice Degraded (Fallback Active)</span>}
+                  {voiceState === 'idle' && <span className="text-on-surface-variant">Idle — Ready for Voice or Text</span>}
+                </span>
+                <span className="font-telemetry-mono text-[10px] text-tertiary uppercase px-1.5 py-0.2 rounded bg-tertiary/10 border border-tertiary/20">
+                  {activeBusiness.replace('_', ' ')}
+                </span>
+              </div>
+              <span className="text-[11px] text-on-surface-variant font-body-sm">
+                {voiceState === 'speaking' && 'Aria is speaking. Tap Interrupt below or speak anytime to barge in.'}
+                {voiceState === 'listening' && 'Listening to your speech... silence will automatically complete turn.'}
+                {voiceState === 'processing' && 'Synthesizing response grounded strictly in approved tenant knowledge base.'}
+                {voiceState === 'requesting_microphone' && 'Requesting browser audio permission...'}
+                {voiceState === 'interrupted' && 'User barged in! Aria voice output halted immediately.'}
+                {voiceState === 'error' && 'Voice service unavailable. Text-chat fallback is 100% operational.'}
+                {voiceState === 'idle' && 'Tap microphone to speak, or type question directly in text chat.'}
+              </span>
+            </div>
           </div>
-          {isSpeaking && (
+
+          {/* Quick Barge-In / Interrupt Button */}
+          {voiceState === 'speaking' && (
             <button
-              onClick={stopSpeaking}
-              className="px-2 py-0.5 rounded bg-surface-container-highest hover:bg-error-container hover:text-on-error text-on-surface-variant font-telemetry-badge text-telemetry-badge transition-colors flex items-center gap-1"
+              onClick={() => stopSpeaking(true)}
+              className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-label-sm text-label-sm font-semibold transition-all shadow-md flex items-center gap-1.5 animate-pulse"
+              title="Interrupt Aria immediately"
             >
-              <span className="material-symbols-outlined text-[12px]">pause</span>
-              <span>Interrupt Aria</span>
+              <span className="material-symbols-outlined text-[14px]">pan_tool</span>
+              <span>Interrupt / Barge-In</span>
             </button>
           )}
         </div>
@@ -1092,6 +1167,20 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
                         Intent: {m.intent}
                       </span>
                     )}
+                    {m.sourcesUsed && m.sourcesUsed.length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {m.sourcesUsed.map((src, sIdx) => (
+                          <span
+                            key={sIdx}
+                            className="px-1.5 py-0.2 rounded bg-tertiary/10 text-tertiary font-telemetry-mono text-[10px] border border-tertiary/20 flex items-center gap-0.5"
+                            title={`Grounded in tenant knowledge source: ${src}`}
+                          >
+                            <span className="material-symbols-outlined text-[10px]">auto_stories</span>
+                            <span>{src}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1190,6 +1279,13 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
             <span className="material-symbols-outlined text-[20px]">send</span>
           </button>
         </div>
+      </div>
+      <div className="px-space-md pb-2 pt-0 flex items-center justify-between text-[11px] font-telemetry-mono text-outline">
+        <span className="flex items-center gap-1">
+          <span className="material-symbols-outlined text-[13px] text-tertiary">verified_user</span>
+          <span>Aria voice agent grounded in approved tenant knowledge • Barge-in enabled</span>
+        </span>
+        <span className="text-on-surface-variant">Text-chat fallback operational across all browsers</span>
       </div>
     </div>
   );

@@ -10,9 +10,13 @@ import type {
   KnowledgeDocument,
   TaskRecord,
   VoiceCallSession,
-  BusinessId
+  BusinessId,
+  InternalNote,
+  ConversationReviewFeedback
 } from '../../types/index.ts';
 import { getDb, isDbConnected, COLLECTIONS, getPersistenceMode } from './mongodb.ts';
+import { sanitizeText } from '../utils/sanitizer.ts';
+
 
 // Initial Seed Data for the 4 sovereign business domains
 export const INITIAL_USERS: User[] = [
@@ -596,59 +600,246 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
 ];
 
 export const INITIAL_KNOWLEDGE_DOCS: KnowledgeDocument[] = [
+  // 1. Atonia Insurance (Approved Internal + Public FAQ)
   {
     id: 'kb-ins-01',
     businessId: 'ATONIA_INSURANCE',
     title: 'Commercial Motor Fleet Endorsement & Vehicle Addition Rules',
     category: 'Underwriting Guidelines',
+    topic: 'Fleet Endorsements',
     summary: 'Procedures for pro-rating vehicle additions to Lloyd’s Syndicate Commercial Policies.',
     content:
       'All additions of commercial light goods vehicles (LGVs) such as Mercedes Sprinters under 3.5t require valid VRN lookup via DVLA, driver verification against the approved pool, and automatic pro-rated calculation. Premium adjustments over £1,000 must be reviewed by a Level 2 broker.',
     version: 'v4.2.1',
     status: 'published',
     lastUpdated: '2026-09-15',
-    author: 'Compliance Dept'
+    author: 'Compliance Dept',
+    isPublic: false,
+    revisions: [
+      {
+        version: 'v4.2.0',
+        content: 'Original fleet vehicle threshold set to £500.',
+        updatedBy: 'Compliance Dept',
+        updatedAt: '2026-08-01',
+        changeNote: 'Initial underwriting schedule'
+      },
+      {
+        version: 'v4.2.1',
+        content:
+          'All additions of commercial light goods vehicles (LGVs) such as Mercedes Sprinters under 3.5t require valid VRN lookup via DVLA, driver verification against the approved pool, and automatic pro-rated calculation. Premium adjustments over £1,000 must be reviewed by a Level 2 broker.',
+        updatedBy: 'Sarah Jenkins',
+        updatedAt: '2026-09-15',
+        changeNote: 'Adjusted threshold to £1,000 per syndication update'
+      }
+    ]
   },
+  {
+    id: 'kb-ins-faq-01',
+    businessId: 'ATONIA_INSURANCE',
+    title: 'FAQ: How do I add a new vehicle to my fleet policy?',
+    category: 'Public FAQs',
+    topic: 'Fleet Administration',
+    summary: 'Step-by-step guidance for adding commercial vehicles to active fleet insurance.',
+    content:
+      'You can request vehicle additions 24/7 through Atonia Agent. Provide your policy number, vehicle registration marks (VRNs), and annual estimated mileage. Our DVLA system verifies vehicle specifications in real time. Standard additions are processed immediately with cover starting from midnight.',
+    version: 'v1.0.0',
+    status: 'published',
+    isFaq: true,
+    isPublic: true,
+    faqQuestion: 'How do I add a new vehicle to my commercial fleet policy?',
+    faqAnswer:
+      'Provide your policy number (#AIB-XXXX), Vehicle Registration Marks (VRNs), and estimated annual mileage. Cover can be verified and bound effective midnight.',
+    lastUpdated: '2026-09-10',
+    author: 'Sarah Jenkins',
+    approvedBy: 'Elena Vance',
+    approvedAt: '2026-09-11'
+  },
+  {
+    id: 'kb-ins-boundary-public',
+    businessId: 'ATONIA_INSURANCE',
+    title: 'Atonia Insurance Brokers Regulatory Charter & Scope of Authority',
+    category: 'Regulatory Charter',
+    topic: 'Broker vs Carrier Scope',
+    summary: 'Clarification of regulatory permissions: independent broker status vs syndicate underwriting.',
+    content:
+      'Atonia Insurance Brokers Limited is an FCA-regulated insurance broker and Lloyd’s registered intermediary. The firm acts exclusively as a broker and does NOT underwrite or bear balance-sheet insurance risk. All insurance contracts and risk-bearing capacity are backed by authorized Lloyd’s syndicates and third-party insurance carriers.',
+    version: 'v1.0.0',
+    status: 'published',
+    isPublic: true,
+    isFaq: false,
+    lastUpdated: '2026-09-01',
+    author: 'Compliance Dept',
+    approvedBy: 'Elena Vance',
+    approvedAt: '2026-09-02'
+  },
+  {
+    id: 'kb-ins-draft-01',
+    businessId: 'ATONIA_INSURANCE',
+    title: 'Draft: EV Charging Station Endorsement Protocol',
+    category: 'Underwriting Guidelines',
+    topic: 'Electric Vehicles',
+    summary: 'Awaiting actuarial signoff: coverage guidelines for commercial high-output depot DC fast chargers.',
+    content:
+      'Commercial depot chargers above 50kW require electrical safety certification (BS 7671) and dedicated surge suppression. Fire risk loading is 2.5% on building and contents. Awaiting final Lloyd Syndicate underwriting treaty approval.',
+    version: 'v0.1.0',
+    status: 'draft',
+    lastUpdated: '2026-10-01',
+    author: 'Sarah Jenkins',
+    suggestedBy: 'Sarah Jenkins',
+    sourceConversationId: 'conv-david-sterling',
+    isPublic: false
+  },
+
+  // 2. Eureka Banking (Approved Internal + Public FAQ + Draft)
   {
     id: 'kb-euk-01',
     businessId: 'EUREKA',
     title: 'Emergency Card Freeze & ATM Withdrawal Auth Protocol',
     category: 'Banking Security',
+    topic: 'Card Security',
     summary: 'Biometric verification protocols for lost/stolen cards and emergency cash tokens.',
     content:
       'When a customer reports a lost or stolen payment card, the AI Agent must execute fx:freeze_card_v2 immediately. If emergency cash is requested, customer voice or cryptographic token must verify with minimum 95% confidence. Emergency cash limit is capped at £200 per 24 hours.',
     version: 'v3.1.0',
     status: 'published',
     lastUpdated: '2026-09-20',
-    author: 'Security Officer'
+    author: 'Security Officer',
+    isPublic: false
   },
+  {
+    id: 'kb-euk-faq-01',
+    businessId: 'EUREKA',
+    title: 'FAQ: What should I do if my debit card is lost or stolen?',
+    category: 'Public FAQs',
+    topic: 'Card Services',
+    summary: 'Instant steps to protect your Eureka bank account when a card is misplaced.',
+    content:
+      'If your debit card is lost or stolen, speak to Aria or use the Eureka mobile banking app to freeze your card immediately. Freezing prevents any new transactions while keeping direct debits and standing orders active. You can request emergency cash codes or order a free replacement card that arrives in 2-3 business days.',
+    version: 'v1.2.0',
+    status: 'published',
+    isFaq: true,
+    isPublic: true,
+    faqQuestion: 'What should I do if my Eureka debit card is lost or stolen?',
+    faqAnswer:
+      'You can instantly lock your card via voice or app. If needed, an emergency ATM cash withdrawal code will be generated to your verified mobile number.',
+    lastUpdated: '2026-09-18',
+    author: 'Mark Hughes',
+    approvedBy: 'Elena Vance',
+    approvedAt: '2026-09-19'
+  },
+  {
+    id: 'kb-euk-draft-01',
+    businessId: 'EUREKA',
+    title: 'Draft: Virtual One-Time Cards for Cross-Border E-Commerce',
+    category: 'Digital Banking',
+    topic: 'Virtual Cards',
+    summary: 'Proposed guidelines for issuing single-use burner cards with dynamic CVVs.',
+    content:
+      'Customers may generate up to 5 single-use virtual cards per calendar month. Each card auto-destroys 30 minutes after initial authorization. Multi-currency settlement fee waived for transactions under €500. Awaiting compliance review.',
+    version: 'v0.2.0',
+    status: 'draft',
+    lastUpdated: '2026-10-02',
+    author: 'Mark Hughes',
+    suggestedBy: 'Mark Hughes',
+    sourceConversationId: 'conv-sophia-chen',
+    isPublic: false
+  },
+
+  // 3. Atonia Marketplace (Approved Logistics + Public FAQ)
   {
     id: 'kb-mkt-01',
     businessId: 'ATONIA_MARKETPLACE',
     title: 'Wholesale Pallet Damage & RMA Resolution Guide',
     category: 'Retail Logistics',
+    topic: 'Returns & Disputed Deliveries',
     summary: 'Guidance on carrier breach claims, FedEx return label issuance, and inventory replacement.',
     content:
       'For freight shipments with broken warehouse seals or punctured goods, collect photographic proof and carrier bill of lading. Auto-refunds are limited to $500. B2B orders above $10,000 require manual review by Tier-2 specialist before issuing replacement inventory.',
     version: 'v2.8.0',
     status: 'published',
     lastUpdated: '2026-08-30',
-    author: 'Operations Team'
+    author: 'Operations Team',
+    isPublic: false
   },
+  {
+    id: 'kb-mkt-faq-01',
+    businessId: 'ATONIA_MARKETPLACE',
+    title: 'FAQ: What is Atonia Marketplace’s standard return policy?',
+    category: 'Public FAQs',
+    topic: 'Returns & Refunds',
+    summary: 'Customer return window, prepaid label generation, and refund timelines.',
+    content:
+      'Atonia Marketplace offers a 30-day hassle-free return window on standard consumer goods. Returns are completely free with our pre-generated FedEx return shipping labels. Once scanned at a drop-off location, refunds are credited back to your original payment method within 3 to 5 business days.',
+    version: 'v1.0.0',
+    status: 'published',
+    isFaq: true,
+    isPublic: true,
+    faqQuestion: 'What is the return window and how do I receive a refund?',
+    faqAnswer:
+      'You have 30 days from delivery to return unopened or damaged merchandise. Prepaid FedEx shipping labels are generated automatically. Refunds process within 3-5 business days of carrier pickup.',
+    lastUpdated: '2026-08-28',
+    author: 'Operations Team',
+    approvedBy: 'Elena Vance',
+    approvedAt: '2026-08-29'
+  },
+
+  // 4. Sorplos Insurtech (Approved Carrier Aggregation + Public FAQ)
   {
     id: 'kb-sor-01',
     businessId: 'SORPLOS_INSURTECH',
     title: 'Multi-Carrier Quote Aggregation & Zero-Underwriting Policy',
     category: 'Regulatory Boundary',
+    topic: 'Carrier Aggregation',
     summary: 'CRITICAL: Strict prohibition against AI altering, discounting, or underwriting insurer quotes.',
     content:
       'The AI Agent operates strictly as an aggregation and coordination layer. It must NEVER alter insurer premiums, mark up or discount quotes, or make binding underwriting decisions on out-of-appetite risks. All quotes are fetched directly from authorized carrier APIs.',
     version: 'v5.0.0',
     status: 'published',
     lastUpdated: '2026-09-25',
-    author: 'Legal & Risk'
+    author: 'Legal & Risk',
+    isPublic: false
+  },
+  {
+    id: 'kb-sor-faq-01',
+    businessId: 'SORPLOS_INSURTECH',
+    title: 'FAQ: How does Sorplos Insurtech compare insurance quotes?',
+    category: 'Public FAQs',
+    topic: 'Comparison Engine',
+    summary: 'How Sorplos aggregates live pricing from accredited UK and EU insurance carriers.',
+    content:
+      'Sorplos compares real-time rates directly from licensed insurers through automated carrier APIs. We never markup carrier rates or alter underwriting criteria. Our comparison engine provides transparent, unbiased options so you can choose the right coverage tier for your business or personal needs.',
+    version: 'v1.0.0',
+    status: 'published',
+    isFaq: true,
+    isPublic: true,
+    faqQuestion: 'How does Sorplos aggregate quotes from different insurers?',
+    faqAnswer:
+      'Sorplos queries authorized carrier underwriting APIs in parallel. Premiums shown are direct from carrier syndicates without hidden broker markups or alteration.',
+    lastUpdated: '2026-09-22',
+    author: 'Sarah Jenkins',
+    approvedBy: 'Elena Vance',
+    approvedAt: '2026-09-23'
+  },
+  {
+    id: 'kb-sor-boundary-public',
+    businessId: 'SORPLOS_INSURTECH',
+    title: 'Sorplos Insurtech MGA Regulatory Standing & Quoting Boundary',
+    category: 'Regulatory Boundary',
+    topic: 'Carrier Aggregation and MGA Scope',
+    summary: 'Statutory disclosure on MGA distribution status and zero direct underwriting capacity.',
+    content:
+      'Sorplos Partnering Insurtech Limited operates strictly as an MGA technology distribution partner with zero direct risk-bearing authority. Sorplos provides software interfaces, aggregation APIs, and digital distribution. All binding underwriting authority and balance-sheet risk are held exclusively by partner carrier syndicates.',
+    version: 'v1.0.0',
+    status: 'published',
+    isPublic: true,
+    isFaq: false,
+    lastUpdated: '2026-09-01',
+    author: 'Legal & Risk',
+    approvedBy: 'Elena Vance',
+    approvedAt: '2026-09-02'
   }
 ];
+
 
 export const INITIAL_TASKS: TaskRecord[] = [
   {
@@ -1069,6 +1260,11 @@ export class AppRepository {
     channel?: string;
     status?: string;
     search?: string;
+    customerRef?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    page?: number;
+    limit?: number;
   }): Promise<Conversation[]> {
     const db = getDb();
     if (db && isDbConnected()) {
@@ -1083,12 +1279,36 @@ export class AppRepository {
       if (query?.status && query.status !== 'All Agent States') {
         filter.status = query.status;
       }
+      if (query?.customerRef) {
+        filter.$or = [
+          { customerId: query.customerRef },
+          { customerIdentifier: query.customerRef }
+        ];
+      }
+      if (query?.dateFrom || query?.dateTo) {
+        const dateFilter: Record<string, string> = {};
+        if (query.dateFrom) dateFilter.$gte = query.dateFrom;
+        if (query.dateTo) dateFilter.$lte = query.dateTo;
+        filter.updatedAt = dateFilter;
+      }
       if (query?.search) {
         const regex = { $regex: query.search, $options: 'i' };
-        filter.$or = [{ customerName: regex }, { intent: regex }, { customerIdentifier: regex }];
+        filter.$or = [
+          { customerName: regex },
+          { intent: regex },
+          { customerIdentifier: regex },
+          { id: regex }
+        ];
       }
 
-      const docs = await db.collection(COLLECTIONS.CONVERSATIONS).find(filter).toArray();
+      let cursor = db.collection(COLLECTIONS.CONVERSATIONS).find(filter).sort({ updatedAt: -1 });
+
+      if (query?.page && query?.limit) {
+        const skip = (Math.max(1, query.page) - 1) * query.limit;
+        cursor = cursor.skip(skip).limit(query.limit);
+      }
+
+      const docs = await cursor.toArray();
       return docs.map((d) => this.stripMongoId(d) as unknown as Conversation);
     }
 
@@ -1102,16 +1322,97 @@ export class AppRepository {
     if (query?.status && query.status !== 'All Agent States') {
       list = list.filter((c) => c.status === query.status);
     }
+    if (query?.customerRef) {
+      list = list.filter((c) => c.customerId === query.customerRef || c.customerIdentifier === query.customerRef);
+    }
     if (query?.search) {
       const q = query.search.toLowerCase();
       list = list.filter(
         (c) =>
           c.customerName.toLowerCase().includes(q) ||
           c.intent.toLowerCase().includes(q) ||
-          c.customerIdentifier.toLowerCase().includes(q)
+          c.customerIdentifier.toLowerCase().includes(q) ||
+          c.id.toLowerCase().includes(q)
       );
     }
+
+    if (query?.page && query?.limit) {
+      const start = (Math.max(1, query.page) - 1) * query.limit;
+      return list.slice(start, start + query.limit);
+    }
+
     return list;
+  }
+
+  async countConversations(query?: {
+    businessId?: string;
+    channel?: string;
+    status?: string;
+    search?: string;
+    customerRef?: string;
+  }): Promise<number> {
+    const db = getDb();
+    if (db && isDbConnected()) {
+      await this.ensureSeeded(db);
+      const filter: Record<string, unknown> = {};
+      if (query?.businessId && query.businessId !== 'ALL') {
+        filter.businessId = query.businessId;
+      }
+      if (query?.channel && query.channel !== 'all') {
+        filter.channel = query.channel;
+      }
+      if (query?.status && query.status !== 'All Agent States') {
+        filter.status = query.status;
+      }
+      if (query?.customerRef) {
+        filter.$or = [{ customerId: query.customerRef }, { customerIdentifier: query.customerRef }];
+      }
+      if (query?.search) {
+        const regex = { $regex: query.search, $options: 'i' };
+        filter.$or = [{ customerName: regex }, { intent: regex }, { customerIdentifier: regex }, { id: regex }];
+      }
+      return await db.collection(COLLECTIONS.CONVERSATIONS).countDocuments(filter);
+    }
+
+    const convs = await this.getConversations({ ...query, page: undefined, limit: undefined });
+    return convs.length;
+  }
+
+  async listConversationsPaginated(query?: {
+    businessId?: string;
+    channel?: string;
+    status?: string;
+    customerRef?: string;
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    conversations: Conversation[];
+    pagination: {
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+    };
+  }> {
+    const page = Math.max(1, query?.page || 1);
+    const limit = Math.max(1, Math.min(100, query?.limit || 20));
+    const [conversations, total] = await Promise.all([
+      this.getConversations({ ...query, page, limit }),
+      this.countConversations(query)
+    ]);
+    const totalPages = Math.ceil(total / limit) || 1;
+    return {
+      conversations,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages
+      }
+    };
   }
 
   async getConversationById(id: string): Promise<Conversation | null> {
@@ -1125,12 +1426,28 @@ export class AppRepository {
   }
 
   async addMessage(conversationId: string, message: Message): Promise<Conversation> {
+    // Sanitize message content to prevent accidental leakage of sensitive credentials, BVN, NIN, card data
+    const cleanMessage: Message = {
+      ...message,
+      content: sanitizeText(message.content)
+    };
+
     const db = getDb();
     if (db && isDbConnected()) {
       await this.ensureSeeded(db);
+
+      // Check if message ID already exists to prevent duplicate insertion on retry
+      const existingConv = await db.collection(COLLECTIONS.CONVERSATIONS).findOne({
+        id: conversationId,
+        'messages.id': cleanMessage.id
+      });
+      if (existingConv) {
+        return this.stripMongoId(existingConv) as unknown as Conversation;
+      }
+
       // Persist individual message record with timestamp index
       await db.collection(COLLECTIONS.MESSAGES).insertOne({
-        ...message,
+        ...cleanMessage,
         createdAt: new Date().toISOString()
       });
 
@@ -1138,7 +1455,7 @@ export class AppRepository {
       const updated = await db.collection(COLLECTIONS.CONVERSATIONS).findOneAndUpdate(
         { id: conversationId },
         {
-          $push: { messages: message } as unknown as Document,
+          $push: { messages: cleanMessage } as unknown as Document,
           $set: {
             lastActivity: 'Just now',
             updatedAt: new Date().toISOString()
@@ -1158,8 +1475,125 @@ export class AppRepository {
     if (!conv) {
       throw new Error(`Conversation ${conversationId} not found.`);
     }
-    conv.messages.push(message);
+
+    // Deduplication check for in-memory mode
+    if (conv.messages.some((m) => m.id === cleanMessage.id)) {
+      return conv;
+    }
+
+    conv.messages.push(cleanMessage);
     conv.lastActivity = 'Just now';
+    conv.updatedAt = new Date().toISOString();
+    return conv;
+  }
+
+  async appendMessage(conversationId: string, message: Message): Promise<Conversation> {
+    return this.addMessage(conversationId, message);
+  }
+
+  async addInternalNote(
+    conversationId: string,
+    noteOrText: InternalNote | string,
+    authorName: string = 'Staff',
+    authorRole: UserRole = 'OPERATIONS_LEAD'
+  ): Promise<Conversation> {
+    const rawNote: InternalNote =
+      typeof noteOrText === 'string'
+        ? {
+            id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            authorName,
+            authorRole,
+            text: noteOrText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }
+        : noteOrText;
+
+    const cleanNote: InternalNote = {
+      ...rawNote,
+      text: sanitizeText(rawNote.text)
+    };
+
+    const db = getDb();
+    if (db && isDbConnected()) {
+      await this.ensureSeeded(db);
+      const updated = await db.collection(COLLECTIONS.CONVERSATIONS).findOneAndUpdate(
+        { id: conversationId },
+        {
+          $push: { internalNotes: cleanNote } as unknown as Document,
+          $set: { updatedAt: new Date().toISOString() }
+        },
+        { returnDocument: 'after' }
+      );
+      if (!updated) {
+        throw new Error(`Conversation ${conversationId} not found.`);
+      }
+      return this.stripMongoId(updated) as unknown as Conversation;
+    }
+
+    const conv = this.memConversations.find((c) => c.id === conversationId);
+    if (!conv) {
+      throw new Error(`Conversation ${conversationId} not found.`);
+    }
+    if (!conv.internalNotes) {
+      conv.internalNotes = [];
+    }
+    conv.internalNotes.push(cleanNote);
+    conv.updatedAt = new Date().toISOString();
+    return conv;
+  }
+
+  async flagConversationReview(
+    conversationId: string,
+    flagged: boolean,
+    feedbackOrRating?: ConversationReviewFeedback | number,
+    notes?: string,
+    reviewerName?: string
+  ): Promise<Conversation> {
+    let feedback: ConversationReviewFeedback | undefined;
+    if (typeof feedbackOrRating === 'number') {
+      feedback = {
+        reviewerName: reviewerName || 'Supervisor',
+        rating: feedbackOrRating,
+        notes: notes || '',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+    } else {
+      feedback = feedbackOrRating;
+    }
+
+    const db = getDb();
+    if (db && isDbConnected()) {
+      await this.ensureSeeded(db);
+      const updateDoc: Record<string, unknown> = {
+        flaggedForReview: flagged,
+        updatedAt: new Date().toISOString()
+      };
+      if (feedback) {
+        updateDoc.reviewFeedback = feedback;
+      }
+      const mongoUpdate: Record<string, unknown> = { $set: updateDoc };
+
+      const updated = await db.collection(COLLECTIONS.CONVERSATIONS).findOneAndUpdate(
+        { id: conversationId },
+        mongoUpdate as unknown as Document,
+        { returnDocument: 'after' }
+      );
+      if (!updated) {
+        throw new Error(`Conversation ${conversationId} not found.`);
+      }
+      return this.stripMongoId(updated) as unknown as Conversation;
+    }
+
+    const conv = this.memConversations.find((c) => c.id === conversationId);
+    if (!conv) {
+      throw new Error(`Conversation ${conversationId} not found.`);
+    }
+    conv.flaggedForReview = flagged;
+    if (feedback) {
+      if (!conv.reviewFeedback) conv.reviewFeedback = [];
+      conv.reviewFeedback.push(feedback);
+    }
+    conv.updatedAt = new Date().toISOString();
     return conv;
   }
 
@@ -1188,6 +1622,7 @@ export class AppRepository {
       throw new Error(`Conversation ${conversationId} not found.`);
     }
     Object.assign(conv, patch);
+    conv.updatedAt = new Date().toISOString();
     return conv;
   }
 
@@ -1386,32 +1821,267 @@ export class AppRepository {
   // ----------------------------------------------------
   // Knowledge Base Repository
   // ----------------------------------------------------
-  async getKnowledgeDocs(query?: { businessId?: string; search?: string }): Promise<KnowledgeDocument[]> {
+  async getKnowledgeDocs(query?: {
+    businessId?: string;
+    search?: string;
+    status?: string;
+    category?: string;
+    topic?: string;
+    isFaq?: boolean;
+    isPublic?: boolean;
+  }): Promise<KnowledgeDocument[]> {
     const db = getDb();
     if (db && isDbConnected()) {
       await this.ensureSeeded(db);
       const filter: Record<string, unknown> = {};
       if (query?.businessId && query.businessId !== 'ALL') {
-        filter.businessId = query.businessId;
+        const qId = query.businessId;
+        if (qId === 'SORPLOS' || qId === 'SORPLOS_INSURTECH') {
+          filter.businessId = { $in: ['SORPLOS', 'SORPLOS_INSURTECH'] };
+        } else if (qId === 'ATONIA_INSURANCE' || qId === 'ATONIA_INS') {
+          filter.businessId = { $in: ['ATONIA_INSURANCE', 'ATONIA_INS'] };
+        } else if (qId === 'ATONIA_MARKETPLACE' || qId === 'ATONIA_MKT') {
+          filter.businessId = { $in: ['ATONIA_MARKETPLACE', 'ATONIA_MKT'] };
+        } else {
+          filter.businessId = qId;
+        }
+      }
+      if (query?.status && query.status !== 'all') {
+        filter.status = query.status;
+      }
+      if (query?.category && query.category !== 'all') {
+        filter.category = query.category;
+      }
+      if (query?.topic) {
+        filter.topic = query.topic;
+      }
+      if (query?.isFaq !== undefined) {
+        filter.isFaq = query.isFaq;
+      }
+      if (query?.isPublic !== undefined) {
+        filter.isPublic = query.isPublic;
       }
       if (query?.search) {
         const regex = { $regex: query.search, $options: 'i' };
-        filter.$or = [{ title: regex }, { summary: regex }, { content: regex }];
+        filter.$or = [
+          { title: regex },
+          { summary: regex },
+          { content: regex },
+          { topic: regex },
+          { faqQuestion: regex },
+          { faqAnswer: regex }
+        ];
       }
-      const docs = await db.collection(COLLECTIONS.KNOWLEDGE_DOCS).find(filter).toArray();
+      const docs = await db.collection(COLLECTIONS.KNOWLEDGE_DOCS).find(filter).sort({ lastUpdated: -1 }).toArray();
       return docs.map((d) => this.stripMongoId(d) as unknown as KnowledgeDocument);
     }
 
     let list = this.memKnowledgeDocs;
     if (query?.businessId && query.businessId !== 'ALL') {
-      list = list.filter((d) => d.businessId === query.businessId);
+      const qId = query.businessId;
+      const isSorplos = qId === 'SORPLOS' || qId === 'SORPLOS_INSURTECH';
+      const isAtoniaIns = qId === 'ATONIA_INSURANCE' || qId === 'ATONIA_INS';
+      const isAtoniaMkt = qId === 'ATONIA_MARKETPLACE' || qId === 'ATONIA_MKT';
+      list = list.filter((d) => {
+        if (isSorplos) return d.businessId === 'SORPLOS' || d.businessId === 'SORPLOS_INSURTECH';
+        if (isAtoniaIns) return d.businessId === 'ATONIA_INSURANCE' || d.businessId === 'ATONIA_INS';
+        if (isAtoniaMkt) return d.businessId === 'ATONIA_MARKETPLACE' || d.businessId === 'ATONIA_MKT';
+        return d.businessId === qId;
+      });
+    }
+    if (query?.status && query.status !== 'all') {
+      list = list.filter((d) => d.status === query.status);
+    }
+    if (query?.category && query.category !== 'all') {
+      list = list.filter((d) => d.category === query.category);
+    }
+    if (query?.topic) {
+      list = list.filter((d) => d.topic === query.topic);
+    }
+    if (query?.isFaq !== undefined) {
+      list = list.filter((d) => Boolean(d.isFaq) === query.isFaq);
+    }
+    if (query?.isPublic !== undefined) {
+      list = list.filter((d) => Boolean(d.isPublic) === query.isPublic);
     }
     if (query?.search) {
       const q = query.search.toLowerCase();
-      list = list.filter((d) => d.title.toLowerCase().includes(q) || d.summary.toLowerCase().includes(q));
+      list = list.filter(
+        (d) =>
+          d.title.toLowerCase().includes(q) ||
+          d.summary.toLowerCase().includes(q) ||
+          d.content.toLowerCase().includes(q) ||
+          (d.faqQuestion && d.faqQuestion.toLowerCase().includes(q)) ||
+          (d.topic && d.topic.toLowerCase().includes(q))
+      );
     }
     return list;
   }
+
+  async getKnowledgeDocById(id: string): Promise<KnowledgeDocument | null> {
+    const db = getDb();
+    if (db && isDbConnected()) {
+      await this.ensureSeeded(db);
+      const doc = await db.collection(COLLECTIONS.KNOWLEDGE_DOCS).findOne({ id });
+      return doc ? (this.stripMongoId(doc) as unknown as KnowledgeDocument) : null;
+    }
+    return this.memKnowledgeDocs.find((d) => d.id === id) || null;
+  }
+
+  async createKnowledgeDoc(docData: Omit<KnowledgeDocument, 'id'> & { id?: string }): Promise<KnowledgeDocument> {
+    const businessId = docData.businessId || 'EUREKA';
+    const bIdStr = String(businessId).toLowerCase().slice(0, 3);
+    const newDoc: KnowledgeDocument = {
+      ...docData,
+      businessId,
+      id: docData.id || `kb-${bIdStr}-${Date.now().toString(36)}`,
+      version: docData.version || '1.0',
+      author: docData.author || 'Operations Staff',
+      lastUpdated: new Date().toISOString().split('T')[0],
+      revisions: docData.revisions || [
+        {
+          version: docData.version || '1.0',
+          content: docData.content,
+          updatedBy: docData.author || 'Operations Staff',
+          updatedAt: new Date().toISOString(),
+          changeNote: 'Initial authoring'
+        }
+      ]
+    };
+
+    const db = getDb();
+    if (db && isDbConnected()) {
+      await this.ensureSeeded(db);
+      await db.collection(COLLECTIONS.KNOWLEDGE_DOCS).insertOne({ ...newDoc });
+      return newDoc;
+    }
+
+    this.memKnowledgeDocs.unshift(newDoc);
+    return newDoc;
+  }
+
+  async updateKnowledgeDoc(
+    id: string,
+    patch: Partial<KnowledgeDocument>,
+    editorName: string,
+    changeSummary: string = 'Updated document'
+  ): Promise<KnowledgeDocument> {
+    const existing = await this.getKnowledgeDocById(id);
+    if (!existing) {
+      throw new Error(`Knowledge document ${id} not found.`);
+    }
+
+    const nextRevisions = existing.revisions ? [...existing.revisions] : [];
+    let nextVersion = patch.version || existing.version || '1.0';
+    if (patch.content && patch.content !== existing.content) {
+      const currentVerNum = parseFloat(existing.version) || 1.0;
+      nextVersion = (currentVerNum + 0.1).toFixed(1);
+      nextRevisions.push({
+        version: nextVersion,
+        content: patch.content,
+        updatedBy: editorName,
+        updatedAt: new Date().toISOString(),
+        changeNote: changeSummary || `Updated by ${editorName}`
+      });
+    }
+
+    const updatedDoc: Partial<KnowledgeDocument> = {
+      ...patch,
+      version: nextVersion,
+      lastUpdated: new Date().toISOString().split('T')[0],
+      revisions: nextRevisions
+    };
+
+    const db = getDb();
+    if (db && isDbConnected()) {
+      await this.ensureSeeded(db);
+      const res = await db.collection(COLLECTIONS.KNOWLEDGE_DOCS).findOneAndUpdate(
+        { id },
+        { $set: updatedDoc },
+        { returnDocument: 'after' }
+      );
+      if (!res) throw new Error(`Failed to update knowledge doc ${id}`);
+      return this.stripMongoId(res) as unknown as KnowledgeDocument;
+    }
+
+    const idx = this.memKnowledgeDocs.findIndex((d) => d.id === id);
+    if (idx === -1) throw new Error(`Knowledge doc ${id} not found.`);
+    this.memKnowledgeDocs[idx] = { ...this.memKnowledgeDocs[idx], ...updatedDoc };
+    return this.memKnowledgeDocs[idx];
+  }
+
+  async publishKnowledgeDoc(id: string, approverName: string): Promise<KnowledgeDocument> {
+    const patch: Partial<KnowledgeDocument> = {
+      status: 'published',
+      approvedBy: approverName,
+      approvedAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString().split('T')[0]
+    };
+    return this.updateKnowledgeDoc(id, patch, approverName, 'Approved and published');
+  }
+
+  async archiveKnowledgeDoc(id: string): Promise<KnowledgeDocument> {
+    return this.updateKnowledgeDoc(id, { status: 'archived' }, 'System', 'Archived document');
+  }
+
+  async draftKnowledgeFromConversation(
+    conversationId: string,
+    titleOrAuthor?: string,
+    topic?: string,
+    category?: string,
+    businessId?: BusinessId,
+    draftContent?: string,
+    authorName?: string
+  ): Promise<KnowledgeDocument> {
+    const conv = await this.getConversationById(conversationId);
+    const effectiveBusinessId = businessId || (conv?.businessId || 'EUREKA');
+    const effectiveTitle =
+      topic || (conv ? `Operational Resolution: ${conv.intent || conv.customerName}` : 'Operational Resolution');
+    const effectiveCategory = category || (conv?.businessId === 'EUREKA' ? 'Banking' : 'Operations');
+    const effectiveTopic = topic || 'Customer Service Procedure';
+    const effectiveAuthor = authorName || titleOrAuthor || 'Supervisor';
+    const effectiveContent =
+      draftContent ||
+      (conv
+        ? `Resolution Protocol formulated from customer session ${conversationId} (${conv.customerName}):\n\nIssue/Inquiry: ${conv.intent}\nOutcome: ${conv.status.replace(/_/g, ' ')}\nApproved procedure verified.`
+        : 'Formulated from customer session resolution.');
+
+    return this.createKnowledgeDoc({
+      businessId: effectiveBusinessId,
+      title: effectiveTitle,
+      topic: effectiveTopic,
+      category: effectiveCategory,
+      summary: `Draft knowledge entry formulated from customer conversation transcript (${conversationId}).`,
+      content: effectiveContent,
+      version: '1.0',
+      status: 'draft',
+      sourceConversationId: conversationId,
+      author: effectiveAuthor,
+      isPublic: false,
+      isFaq: false
+    });
+  }
+
+  async getPublicKnowledge(queryOrBusinessId?: { businessId?: string; search?: string } | string): Promise<KnowledgeDocument[]> {
+    const businessId = typeof queryOrBusinessId === 'string' ? queryOrBusinessId : queryOrBusinessId?.businessId;
+    const search = typeof queryOrBusinessId === 'object' ? queryOrBusinessId?.search : undefined;
+    return this.getKnowledgeDocs({
+      businessId,
+      search,
+      status: 'published',
+      isPublic: true
+    });
+  }
+
+  async getPublicFaqs(businessId?: string): Promise<KnowledgeDocument[]> {
+    return this.getKnowledgeDocs({
+      businessId,
+      status: 'published',
+      isPublic: true,
+      isFaq: true
+    });
+  }
+
 
   // ----------------------------------------------------
   // Voice Sessions Repository

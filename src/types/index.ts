@@ -10,7 +10,9 @@ export type UserRole =
   | 'UNDERWRITER_SPECIALIST'
   | 'FRAUD_SPECIALIST'
   | 'SUPPORT_AGENT'
-  | 'AUDITOR';
+  | 'AUDITOR'
+  | 'EXTERNAL_CLIENT';
+
 
 export type ChannelType = 'whatsapp' | 'web' | 'voice' | 'mobile_app' | 'email';
 
@@ -164,6 +166,24 @@ export interface Message {
   };
 }
 
+export interface InternalNote {
+  id: string;
+  authorId: string;
+  authorName: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface ConversationReviewFeedback {
+  id: string;
+  reviewerId: string;
+  reviewerName: string;
+  rating?: number; // 1 - 5
+  notes: string;
+  category?: 'COMPLIANCE' | 'ACCURACY' | 'TONE' | 'TOOL_SAFETY';
+  createdAt: string;
+}
+
 export interface Conversation {
   id: string;
   businessId: BusinessId;
@@ -182,6 +202,17 @@ export interface Conversation {
   slaBreachCountdownSeconds?: number;
   messages: Message[];
   activeSuggestion?: string;
+  
+  // Enterprise Conversation Lifecycle
+  startedAt?: string;
+  endedAt?: string;
+  outcome?: 'resolved' | 'escalated' | 'abandoned' | 'pending';
+  internalNotes?: InternalNote[];
+  flaggedForReview?: boolean;
+  reviewFeedback?: ConversationReviewFeedback[];
+  audioRecordConsent?: boolean;
+  retentionDays?: number;
+  updatedAt?: string;
 }
 
 export interface EscalationRecord {
@@ -236,18 +267,39 @@ export interface ToolExecutionEvent {
   verified: boolean;
 }
 
+export interface KnowledgeRevision {
+  version: string;
+  content: string;
+  updatedBy: string;
+  updatedAt: string;
+  changeNote?: string;
+}
+
 export interface KnowledgeDocument {
   id: string;
   businessId: BusinessId;
   title: string;
   category: string;
+  topic?: string;
   summary: string;
   content: string;
   version: string;
   status: 'published' | 'draft' | 'archived';
   lastUpdated: string;
   author: string;
+  
+  // Knowledge Governance
+  isFaq?: boolean;
+  faqQuestion?: string;
+  faqAnswer?: string;
+  isPublic?: boolean; // Available to external clients
+  sourceConversationId?: string; // If drafted from conversation review
+  suggestedBy?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  revisions?: KnowledgeRevision[];
 }
+
 
 export interface AuditLogEntry {
   id: string;

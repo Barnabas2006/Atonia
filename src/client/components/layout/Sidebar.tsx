@@ -23,6 +23,7 @@ export const Sidebar: React.FC = () => {
     { id: 'tasks', label: 'Tasks', icon: 'task_alt' },
     { id: 'voice', label: 'Voice', icon: 'settings_voice', badge: 'SIP/RTP', badgeColor: 'text-tertiary font-telemetry-badge' },
     { id: 'knowledge', label: 'Knowledge', icon: 'menu_book' },
+    { id: 'client-portal', label: 'Client Portal', icon: 'public', badge: 'Public', badgeColor: 'text-primary font-telemetry-badge' },
     { id: 'analytics', label: 'Analytics', icon: 'monitoring' },
     { id: 'audit-logs', label: 'Audit Logs', icon: 'verified_user' },
     { id: 'settings', label: 'Settings', icon: 'tune' }
@@ -34,7 +35,8 @@ export const Sidebar: React.FC = () => {
     'UNDERWRITER_SPECIALIST',
     'FRAUD_SPECIALIST',
     'SUPPORT_AGENT',
-    'AUDITOR'
+    'AUDITOR',
+    'EXTERNAL_CLIENT'
   ];
 
   return (

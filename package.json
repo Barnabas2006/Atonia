@@ -10,7 +10,8 @@
     "start": "node server.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:phase1": "tsx tests/phase1-verification.ts"
+    "test:phase1": "tsx tests/phase1-verification.ts",
+    "test:full": "tsx tests/full-platform-verification.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

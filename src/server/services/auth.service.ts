@@ -102,6 +102,42 @@ export class AuthService {
       return null;
     }
   }
+  isInternalStaff(roleOrUser: string | { role?: string }): boolean {
+    const role = typeof roleOrUser === 'string' ? roleOrUser : roleOrUser?.role || '';
+    return [
+      'SUPER_ADMIN',
+      'OPERATIONS_LEAD',
+      'UNDERWRITER_SPECIALIST',
+      'FRAUD_SPECIALIST',
+      'SUPPORT_AGENT',
+      'AUDITOR'
+    ].includes(role);
+  }
+
+  isExternalClient(roleOrUser: string | { role?: string }): boolean {
+    const role = typeof roleOrUser === 'string' ? roleOrUser : roleOrUser?.role || '';
+    return role === 'EXTERNAL_CLIENT';
+  }
+
+  canManageKnowledge(roleOrUser: string | { role?: string }): boolean {
+    const role = typeof roleOrUser === 'string' ? roleOrUser : roleOrUser?.role || '';
+    return ['SUPER_ADMIN', 'OPERATIONS_LEAD', 'UNDERWRITER_SPECIALIST', 'FRAUD_SPECIALIST'].includes(role);
+  }
+
+  canAccessAuditLogs(roleOrUser: string | { role?: string }): boolean {
+    const role = typeof roleOrUser === 'string' ? roleOrUser : roleOrUser?.role || '';
+    return ['SUPER_ADMIN', 'OPERATIONS_LEAD', 'AUDITOR'].includes(role);
+  }
+
+  canAccessBusiness(userBusinessAccess: string | string[], targetBusinessId: string): boolean {
+    if (userBusinessAccess === 'ALL') return true;
+    if (Array.isArray(userBusinessAccess)) {
+      return userBusinessAccess.includes('ALL') || userBusinessAccess.includes(targetBusinessId);
+    }
+    const splitAccess = userBusinessAccess.split(',').map((s) => s.trim());
+    return splitAccess.includes('ALL') || splitAccess.includes(targetBusinessId);
+  }
 }
 
 export const authService = new AuthService();
+

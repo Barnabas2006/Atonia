@@ -13,6 +13,7 @@ import { KnowledgePage } from './client/pages/KnowledgePage.tsx';
 import { AnalyticsPage } from './client/pages/AnalyticsPage.tsx';
 import { AuditLogsPage } from './client/pages/AuditLogsPage.tsx';
 import { SettingsPage } from './client/pages/SettingsPage.tsx';
+import { ClientPortalPage } from './client/pages/ClientPortalPage.tsx';
 
 const AppContent: React.FC = () => {
   const { currentRoute, toast } = useApp();
@@ -61,6 +62,7 @@ const AppContent: React.FC = () => {
           {currentRoute === 'voice' && <VoicePage />}
           {currentRoute === 'tasks' && <TasksPage />}
           {currentRoute === 'knowledge' && <KnowledgePage />}
+          {currentRoute === 'client-portal' && <ClientPortalPage />}
           {currentRoute === 'analytics' && <AnalyticsPage />}
           {currentRoute === 'audit-logs' && <AuditLogsPage />}
           {currentRoute === 'settings' && <SettingsPage />}
