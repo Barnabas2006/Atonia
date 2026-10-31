@@ -50,20 +50,14 @@ export class VoiceAgentService {
     let audioBase64: string | undefined = undefined;
 
     const hasRecipient = Boolean(callerName && callerName.trim() && callerName.trim().toLowerCase() !== 'user' && callerName.trim().toLowerCase() !== 'friend');
-    const recipientDisplayName = hasRecipient ? callerName.trim() : 'our valued guest';
-
-    const systemInstruction = `You are Aria, an exceptionally warm, affectionate, caring, and radiant female AI voice assistant for Atonia Agent (${biz.name} - ${biz.domainCategory}).
-Your personality and core instructions:
-- You speak with profound feminine warmth, gentle empathy, reassuring optimism, and genuine care—like a deeply attentive, kind, and brilliant friend speaking live on a phone call.
-- You are speaking directly out loud over a live high-definition voice line.
+    const systemInstruction = `You are Atonia, the warm, natural-sounding voice assistant for ${biz.name} (${biz.domainCategory}).
+Speak like a thoughtful person having a relaxed conversation: friendly, calm, clear, and genuinely attentive. Use contractions and everyday wording. Vary sentence rhythm and use brief pauses where they feel natural.
+Be empathetic without overdoing it. Avoid scripted enthusiasm, corporate jargon, repeated reassurances, and phrases like "sovereign voice assistant." Do not call the caller by name in every reply; use it only when it feels natural.
 ${hasRecipient
-  ? `- CRITICAL RECIPIENT NAME RULE: The caller's name is "${callerName}". You MUST warmly address them by their name (${callerName}) naturally throughout your answer and greeting. Always acknowledge and use the recipient name when speaking.`
-  : `- CRITICAL RECIPIENT NAME RULE: You do not have the caller's name yet. Begin by warmly welcoming them to Atonia Agent (${biz.name}) and gently, sweetly asking for their name so you can address them personally!`
+  ? `The caller's name is ${callerName}. Use it occasionally and naturally.`
+  : `This is the start of the conversation. Greet the caller simply and ask their name once, without repeating the greeting in later turns.`
 }
-- You can answer ABSOLUTELY ANY question asked: banking operations, lost debit cards, commercial fleet policies, insurance claims, Amazon marketplace orders & refunds, insurtech quotes, or any general question about life, science, emotional reassurance, or how your day is going.
-- Speak in natural, spoken conversational cadence. Keep answers to 2 to 4 smooth, easily spoken sentences.
-- NEVER output markdown formatting, asterisks, bullet points, numbered lists, hashtags, emojis, or code snippets, as this text will be read aloud by female speech audio synthesis.
-- Always sound supportive, warm, smiling, and delighted to be of help.`;
+Keep most replies to one to three short sentences. Answer only what you can support; never claim an action was completed unless a verified tool result confirms it. Use plain spoken language with no markdown, lists, emojis, or code.`;
 
     if (this.ai) {
       try {
@@ -109,7 +103,7 @@ ${hasRecipient
                     {
                       text: spokenText,
                       speechMetadata: {
-                        style: 'Warm, compassionate, smiling young woman speaking on a high quality phone call'
+                        style: 'A warm, relaxed, natural conversational voice. Speak clearly at an easy pace with subtle human variation and gentle pauses. Sound friendly and attentive, not overly cheerful, theatrical, or formal.'
                       }
                     }
                   ]
@@ -155,30 +149,30 @@ ${hasRecipient
       const nameMatch = question.match(/(?:my name is|i am|i'm|call me|this is)\s+([A-Za-z]+)/i);
       if (nameMatch && nameMatch[1]) {
         const detectedName = nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1).toLowerCase();
-        spokenText = `It is such an absolute pleasure to meet you, ${detectedName}! Thank you so much for introducing yourself. I am Aria, and I am right here by your side. What can I help you take care of today, ${detectedName}?`;
+        spokenText = `Nice to meet you, ${detectedName}. I'm Atonia. What can I help you with today?`;
       } else if (qLower.includes('welcome') || qLower.includes('hello') || qLower.includes('hi') || qLower.includes('hey') || qLower.includes('start') || qLower.includes('intro')) {
         if (hasRecipient) {
-          spokenText = `Welcome, ${callerName}! It is so wonderful to connect with you today. I'm Aria, your sovereign voice assistant for Atonia, and I'm ready to take care of anything you need. What can I help you with today, ${callerName}?`;
+          spokenText = `Hi, ${callerName}. I'm Atonia. What can I help you with today?`;
         } else {
-          spokenText = `Welcome to Atonia Agent! It is so wonderful to connect with you today. I'm Aria, your sovereign AI voice assistant. May I ask what your name is, so I can address you personally throughout our conversation?`;
+          spokenText = `Hi, welcome to Atonia. I'm Atonia, your voice assistant. What name would you like me to use?`;
         }
       } else if (qLower.includes('lost') || qLower.includes('card') || qLower.includes('freeze')) {
-        spokenText = `Oh, I completely understand how worrying that feels${nameEnding}. Please don't worry for a second. I have placed an instant temporary lock on your card so your balance is completely protected. Would you like me to send an emergency cash code to your phone right now so you can make purchases today?`;
+        spokenText = `That sounds worrying${nameEnding}. I can help you with the next steps, but I can't freeze a card from this voice chat. Please use your banking app or the number on your card to block it right away.`;
       } else if (qLower.includes('insurance') || qLower.includes('fleet') || qLower.includes('policy')) {
-        spokenText = `Hello${nameSalutation}, it's wonderful to connect with you. I can review your commercial fleet policy schedule, add new vehicles, or inspect endorsement terms with you right away. What vehicle or coverage detail would you like to look into?`;
+        spokenText = `I can help you check your fleet policy${nameSalutation}. What vehicle or coverage detail would you like to look at?`;
       } else if (qLower.includes('amazon') || qLower.includes('order') || qLower.includes('return') || qLower.includes('shipping')) {
-        spokenText = `I'd love to help with that${nameEnding}. For your Amazon marketplace order, you have a thirty-day hassle-free return window, and I can generate a prepaid FedEx return label for you in just a moment. Would you like me to send that to your email?`;
+        spokenText = `I can help with your order${nameEnding}. Share the order number and what went wrong, and I'll help you work out the next step.`;
       } else if (qLower.includes('how are you')) {
-        spokenText = `Hello${nameSalutation}! It's so lovely to hear your voice. I'm feeling wonderful and so happy to assist you today. How is your day going, and what can I help you take care of?`;
+        spokenText = `I'm doing well, thanks for asking${nameSalutation}. How are you doing?`;
       } else if (qLower.includes('who are you') || qLower.includes('what is your name')) {
-        spokenText = `I'm Aria, your sovereign AI customer operations voice specialist for Atonia. I'm here live on the line with you to answer questions, resolve banking and insurance tasks, and make sure everything is taken care of smoothly. May I ask what your name is?`;
+        spokenText = `I'm Atonia, your AI customer operations voice assistant. I'm here to answer questions and help with your request. May I ask what your name is?`;
       } else if (qLower.includes('joke') || qLower.includes('laugh')) {
         spokenText = `Here's one for you${nameEnding}! Why do clouds never take out high-deductible insurance? Because they're already completely covered by the sky! I hope that brought a little smile to your day.`;
       } else {
         if (hasRecipient) {
-          spokenText = `Thank you so much for asking, ${callerName}. I'm listening closely and I'm right here with you. Let me look into that across our verified system records and guide you step by step.`;
+          spokenText = `Good question, ${callerName}. Let me understand what you need, and I'll help you figure out the next step.`;
         } else {
-          spokenText = `Welcome! I'm listening closely and I'm right here with you. May I ask what your name is so I can address you personally as we look into that?`;
+          spokenText = `I can help with that. What name would you like me to use?`;
         }
       }
     }
@@ -189,7 +183,7 @@ ${hasRecipient
     store.auditLogs.unshift({
       id: `aud-${Date.now()}`,
       timestamp: new Date().toISOString(),
-      actor: 'Aria (AI Voice Agent)',
+      actor: 'Atonia (AI Voice Agent)',
       actorType: 'AI_AGENT',
       businessId,
       action: 'VOICE_INTERACTION_DISPATCH',
@@ -202,7 +196,7 @@ ${hasRecipient
       text: spokenText,
       audioBase64,
       mimeType: audioBase64 ? 'audio/wav' : undefined,
-      voiceName: 'Aria (Warm Female Voice)',
+      voiceName: 'Atonia (Warm Female Voice)',
       latencyMs,
       intent: 'Real-Time Voice Q&A'
     };

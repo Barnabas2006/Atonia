@@ -46,28 +46,27 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
   const [interimSpeech, setInterimSpeech] = useState<string>('');
   const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
-  // Acoustic parameters calibrated for authentic human voice formants
-  const [pitch, setPitch] = useState<number>(1.0); // 1.0 preserves natural human vocal cord resonances
-  const [rate, setRate] = useState<number>(0.98); // 0.98 gives relaxed, natural human conversational pacing
+  const [pitch, setPitch] = useState<number>(1.0);
+  const [rate, setRate] = useState<number>(0.95);
   const [volume, setVolume] = useState<number>(1.0);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [handsFreeMode, setHandsFreeMode] = useState<boolean>(false);
   const [showSettings, setShowSettings] = useState<boolean>(false);
-  const [voicePreset, setVoicePreset] = useState<'ultra-natural' | 'warm-empathetic' | 'crisp-executive'>('ultra-natural');
+  const [voicePreset, setVoicePreset] = useState<'ultra-natural' | 'warm-empathetic' | 'crisp-executive'>('warm-empathetic');
   const [audioLevels, setAudioLevels] = useState<number[]>([12, 24, 18, 32, 45, 28, 16, 38, 52, 40, 22, 14, 30, 48, 26, 18]);
 
   // Messages log: Welcome warmly and ask for the name if not yet known!
   const [messages, setMessages] = useState<VoiceMessage[]>(() => {
     const hasName = Boolean(initialCallerName && initialCallerName.trim());
     const welcomeText = hasName
-      ? `Hello, ${initialCallerName}! A very warm welcome to Atonia. It is so wonderful to connect with you today. I'm Aria, your sovereign voice specialist. I'm right here by your side and ready to help you with banking, fleet insurance, orders, or anything else on your mind. What can I take care of for you today, ${initialCallerName}?`
-      : `Hello and a very warm welcome to Atonia! It is so wonderful to connect with you today. I'm Aria, your sovereign AI voice specialist. May I ask what your name is, so I can address you personally throughout our conversation?`;
+      ? `Hi, ${initialCallerName}. I'm Atonia. What can I help you with today?`
+      : `Hi, welcome to Atonia. I'm Atonia, your voice assistant. What name would you like me to use?`;
 
     return [
       {
         id: 'msg-welcome',
         speaker: 'agent',
-        speakerName: 'Aria (Warm Female Voice)',
+        speakerName: 'Atonia (Warm Female Voice)',
         text: welcomeText,
         time: 'Just now',
         latencyMs: 120,
@@ -78,6 +77,10 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const recognitionRef = useRef<any>(null);
+  const listeningRequestedRef = useRef<boolean>(false);
+  const recognitionSessionRef = useRef<number>(0);
+  const recognitionRestartTimerRef = useRef<number | null>(null);
+  const finalTranscriptRef = useRef<string>('');
   const audioContextRef = useRef<AudioContext | null>(null);
   const currentAudioElementRef = useRef<HTMLAudioElement | null>(null);
 
@@ -134,14 +137,34 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
 
     loadVoices();
     if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
+      window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
     }
 
     return () => {
       if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
         window.speechSynthesis.cancel();
       }
     };
+  }, []);
+
+  useEffect(() => () => {
+    listeningRequestedRef.current = false;
+    recognitionSessionRef.current += 1;
+    if (recognitionRestartTimerRef.current !== null) {
+      window.clearTimeout(recognitionRestartTimerRef.current);
+    }
+
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    try {
+      recognition?.abort();
+    } catch (err) {
+      console.warn('Failed to stop speech recognition during cleanup:', err);
+    }
+
+    currentAudioElementRef.current?.pause();
+    window.speechSynthesis?.cancel();
   }, []);
 
   // Format text for natural human prosody & breathing
@@ -217,12 +240,12 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
     setVoicePreset(preset);
     if (preset === 'ultra-natural') {
       setPitch(1.0);
-      setRate(0.98);
-      showToast('Preset applied: Ultra-Realistic Human (Organic formants & cadence)', 'success');
+      setRate(0.96);
+      showToast('Preset applied: Natural Conversation', 'success');
     } else if (preset === 'warm-empathetic') {
-      setPitch(1.02);
-      setRate(0.94);
-      showToast('Preset applied: Warm & Empathetic (Soft, soothing delivery)', 'success');
+      setPitch(1.0);
+      setRate(0.95);
+      showToast('Preset applied: Warm, Relaxed Conversation', 'success');
     } else {
       setPitch(1.0);
       setRate(1.04);
@@ -314,9 +337,14 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
 
   // Web Speech Recognition (Microphone Speech-to-Text)
   const startListening = () => {
+    if (!isCallActive || isThinking) return;
+    if (recognitionRef.current) return;
+
     if (isSpeaking) {
       stopSpeaking();
     }
+
+    if (typeof window === 'undefined') return;
 
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -326,66 +354,123 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
       return;
     }
 
-    try {
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-      }
+    if (recognitionRestartTimerRef.current !== null) {
+      window.clearTimeout(recognitionRestartTimerRef.current);
+      recognitionRestartTimerRef.current = null;
+    }
 
+    listeningRequestedRef.current = true;
+    finalTranscriptRef.current = '';
+    setInterimSpeech('');
+    const sessionId = ++recognitionSessionRef.current;
+
+    try {
       const recognition = new SpeechRecognition();
       recognition.continuous = false;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
+      recognitionRef.current = recognition;
 
       recognition.onstart = () => {
+        if (sessionId !== recognitionSessionRef.current) return;
         setIsListening(true);
-        setInterimSpeech('');
       };
 
       recognition.onresult = (event: any) => {
-        let currentTranscript = '';
+        if (sessionId !== recognitionSessionRef.current) return;
+
+        let interimTranscript = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const item = event.results[i];
-          if (item[0]) {
-            currentTranscript += item[0].transcript;
-          }
+          const transcript = item[0]?.transcript ?? '';
+          if (item.isFinal) finalTranscriptRef.current += `${transcript} `;
+          else interimTranscript += transcript;
         }
-        setInterimSpeech(currentTranscript);
+
+        setInterimSpeech(`${finalTranscriptRef.current} ${interimTranscript}`.trim());
       };
 
       recognition.onerror = (event: any) => {
+        if (sessionId !== recognitionSessionRef.current) return;
         console.warn('Speech recognition error:', event.error);
+
+        if (event.error === 'no-speech') return;
+
+        listeningRequestedRef.current = false;
         setIsListening(false);
-        if (event.error === 'not-allowed') {
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           showToast('Microphone access denied. Please enable mic permissions or type below.', 'error');
+        } else if (event.error !== 'aborted') {
+          showToast('Speech recognition stopped unexpectedly. Please try again or type your question.', 'warning');
         }
       };
 
       recognition.onend = () => {
-        setIsListening(false);
-        if (interimSpeech && interimSpeech.trim()) {
-          handleSendQuestion(interimSpeech.trim());
+        if (sessionId !== recognitionSessionRef.current) return;
+
+        recognitionRef.current = null;
+        const finalTranscript = finalTranscriptRef.current.trim();
+        if (finalTranscript) {
+          listeningRequestedRef.current = false;
+          finalTranscriptRef.current = '';
           setInterimSpeech('');
+          setIsListening(false);
+          handleSendQuestion(finalTranscript);
+          return;
         }
+
+        if (listeningRequestedRef.current) {
+          recognitionRestartTimerRef.current = window.setTimeout(() => {
+            recognitionRestartTimerRef.current = null;
+            if (listeningRequestedRef.current) startListening();
+          }, 300);
+          return;
+        }
+
+        setIsListening(false);
+        setInterimSpeech('');
       };
 
-      recognitionRef.current = recognition;
       recognition.start();
     } catch (err) {
       console.error('Failed to start speech recognition:', err);
+      listeningRequestedRef.current = false;
+      recognitionRef.current = null;
       setIsListening(false);
+      showToast('Could not start the microphone. Check browser permissions and try again.', 'error');
     }
   };
 
   const stopListening = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
+    listeningRequestedRef.current = false;
+    recognitionSessionRef.current += 1;
+    finalTranscriptRef.current = '';
+    setInterimSpeech('');
     setIsListening(false);
+
+    if (recognitionRestartTimerRef.current !== null) {
+      window.clearTimeout(recognitionRestartTimerRef.current);
+      recognitionRestartTimerRef.current = null;
+    }
+
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    if (recognition) {
+      try {
+        recognition.abort();
+      } catch (err) {
+        console.warn('Failed to stop speech recognition:', err);
+      }
+    }
   };
 
   // Submit question to Voice Agent API
   const handleSendQuestion = async (queryText: string) => {
     if (!queryText.trim() || isThinking) return;
+
+    if (recognitionRef.current || listeningRequestedRef.current) {
+      stopListening();
+    }
 
     const trimmedQuery = queryText.trim();
 
@@ -442,7 +527,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
         const agentMessage: VoiceMessage = {
           id: `agent-${Date.now()}`,
           speaker: 'agent',
-          speakerName: 'Aria (Warm Female Voice)',
+          speakerName: 'Atonia (Warm Female Voice)',
           text: res.text,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
           latencyMs: res.latencyMs || 280,
@@ -463,7 +548,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
       const agentMessage: VoiceMessage = {
         id: `agent-${Date.now()}`,
         speaker: 'agent',
-        speakerName: 'Aria (Warm Female Voice)',
+        speakerName: 'Atonia (Warm Female Voice)',
         text: fallbackText,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         latencyMs: 195,
@@ -481,13 +566,13 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
   };
 
   const samplePrompts = [
-    { label: 'Say Hello & Ask Name', query: 'Hello Aria! I am starting our voice call. Please welcome me!' },
-    { label: 'Tell Aria My Name', query: 'Hi Aria, my name is Alex! Can you address me by my name?' },
+    { label: 'Say Hello & Ask Name', query: 'Hello Atonia! I am starting our voice call. Please welcome me!' },
+    { label: 'Tell Atonia My Name', query: 'Hi Atonia, my name is Alex! Can you address me by my name?' },
     { label: 'Lost Debit Card', query: 'I think I lost my debit card today. Can you freeze it immediately?' },
     { label: 'Commercial Fleet Policy', query: 'Can I add two new Ford Transit vans to my commercial fleet policy schedule?' },
     { label: 'Amazon Order Return', query: 'How do I return an opened item on my Amazon marketplace order?' },
     { label: 'Sorplos Insurance Quote', query: 'What KYC documents do I need to approve my high-risk cargo quote?' },
-    { label: 'Warm Encouragement', query: 'Aria, my work day has been super stressful. Can you cheer me up with some warmth?' },
+    { label: 'Warm Encouragement', query: 'Atonia, my work day has been super stressful. Can you cheer me up with some warmth?' },
     { label: 'Emergency Cash Code', query: 'Can you generate an emergency single-use cash withdrawal code for £200?' }
   ];
 
@@ -506,7 +591,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
               <div className="w-full h-full rounded-full bg-surface-container-lowest flex items-center justify-center overflow-hidden relative">
                 <img
                   src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&q=80"
-                  alt="Aria Warm Voice"
+                  alt="Atonia Voice Assistant"
                   className="w-full h-full object-cover"
                 />
                 {isSpeaking && (
@@ -527,9 +612,9 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
 
           <div className="flex flex-col">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-headline-md text-headline-md text-on-surface">Aria</span>
+              <span className="font-headline-md text-headline-md text-on-surface">Atonia</span>
               <span className="px-2 py-0.5 rounded-full bg-tertiary/15 text-tertiary font-telemetry-badge text-telemetry-badge flex items-center gap-1 font-semibold border border-tertiary/30">
-                <span className="material-symbols-outlined text-[12px]">favorite</span> Ultra-Warm Voice
+                <span className="material-symbols-outlined text-[12px]">favorite</span> Warm, Natural Voice
               </span>
               <span className="px-2 py-0.5 rounded-full bg-primary/15 text-primary font-telemetry-mono text-telemetry-mono border border-primary/30">
                 LIVE HD SIP // RTP E2E
@@ -591,7 +676,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
                     title="Click to change recipient name"
                   >
                     <strong className="text-on-surface underline decoration-dotted decoration-primary/60 underline-offset-2">
-                      {currentRecipientName || 'Awaiting name (Ask Aria)'}
+                      {currentRecipientName || 'Awaiting name (Ask Atonia)'}
                     </strong>
                     <span className="material-symbols-outlined text-[13px] opacity-60 group-hover:opacity-100 text-primary">edit</span>
                   </button>
@@ -663,7 +748,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
               setHandsFreeMode(!handsFreeMode);
               showToast(
                 !handsFreeMode
-                  ? 'Hands-free voice chat activated: mic will listen after Aria speaks.'
+                  ? 'Hands-free voice chat activated: mic will listen after Atonia speaks.'
                   : 'Hands-free mode turned off.',
                 'info'
               );
@@ -709,7 +794,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
             <div className="flex items-center gap-1.5">
               <span className="material-symbols-outlined text-primary text-[18px]">neurology</span>
               <span className="font-label-md text-label-md font-semibold text-on-surface">
-                Human Voice Realism Presets:
+                Voice Style:
               </span>
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -721,8 +806,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
                     : 'bg-surface-container hover:bg-surface-container-high text-on-surface-variant'
                 }`}
               >
-                <span>✨ Ultra-Realistic Human</span>
-                <span className="text-[10px] opacity-80">(1.00x)</span>
+                <span>Natural Conversation</span>
               </button>
               <button
                 onClick={() => applyVoicePreset('warm-empathetic')}
@@ -732,8 +816,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
                     : 'bg-surface-container hover:bg-surface-container-high text-on-surface-variant'
                 }`}
               >
-                <span>🌸 Warm &amp; Empathetic</span>
-                <span className="text-[10px] opacity-80">(1.02x)</span>
+                <span>Warm &amp; Relaxed</span>
               </button>
               <button
                 onClick={() => applyVoicePreset('crisp-executive')}
@@ -743,8 +826,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
                     : 'bg-surface-container hover:bg-surface-container-high text-on-surface-variant'
                 }`}
               >
-                <span>💼 Crisp Executive</span>
-                <span className="text-[10px] opacity-80">(1.04x)</span>
+                <span>Clear &amp; Direct</span>
               </button>
             </div>
           </div>
@@ -852,13 +934,13 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
               onClick={() => {
                 const nameToUse = currentRecipientName ? ` ${currentRecipientName}` : '';
                 speakWarmly(
-                  `Hello${nameToUse}! I'm Aria, speaking with natural human cadence, organic pitch, and warm empathetic inflections. I'm ready to assist you right now!`
+                  `Hi${nameToUse}, I'm Atonia. It's good to have you here. What can I help you with?`
                 );
               }}
               className="py-2 px-4 rounded-lg bg-surface-container-high hover:bg-surface-bright text-primary font-label-md text-label-md font-semibold border border-primary/40 flex items-center justify-center gap-2 transition-colors shadow-sm"
             >
               <span className="material-symbols-outlined text-[18px]">play_circle</span>
-              <span>Test Human Voice Tone</span>
+              <span>Test Voice</span>
             </button>
           </div>
         </div>
@@ -881,11 +963,11 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
             ></span>
             <span className="font-label-sm text-label-sm font-semibold text-on-surface">
               {isSpeaking
-                ? 'Aria is Speaking (Ultra-Warm Voice Output)'
+                ? 'Atonia is speaking'
                 : isListening
                 ? 'Listening to your microphone...'
                 : isThinking
-                ? 'Aria is thinking & synthesizing answer...'
+                ? 'Atonia is thinking & synthesizing answer...'
                 : 'Live RTP Voice Audio Channel Ready'}
             </span>
           </div>
@@ -895,7 +977,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
               className="px-2 py-0.5 rounded bg-surface-container-highest hover:bg-error-container hover:text-on-error text-on-surface-variant font-telemetry-badge text-telemetry-badge transition-colors flex items-center gap-1"
             >
               <span className="material-symbols-outlined text-[12px]">pause</span>
-              <span>Interrupt Aria</span>
+              <span>Interrupt Atonia</span>
             </button>
           )}
         </div>
@@ -941,17 +1023,17 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
               </div>
               <div className="flex flex-col">
                 <span className="font-label-md text-label-md font-bold text-on-surface">
-                  Aria welcomes you &amp; asks for your name
+                  Atonia welcomes you &amp; asks for your name
                 </span>
                 <span className="font-body-sm text-body-sm text-on-surface-variant">
-                  Hear Aria's warm human welcome out loud, or introduce yourself so she addresses you by name.
+                  Hear Atonia's warm welcome out loud, or introduce yourself so the assistant addresses you by name.
                 </span>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => {
-                  const welcomeText = `Hello and a very warm welcome to Atonia! It is so wonderful to connect with you today. I'm Aria, your sovereign AI voice specialist. May I ask what your name is, so I can address you personally throughout our conversation?`;
+                  const welcomeText = `Hi, welcome to Atonia. I'm Atonia, your voice assistant. What name would you like me to use?`;
                   speakWarmly(welcomeText);
                 }}
                 className="px-3 py-1.5 rounded-lg bg-primary text-on-primary font-label-sm text-label-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90 transition-all shadow-sm"
@@ -967,7 +1049,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
                     onClick={() => {
                       setCurrentRecipientName(name);
                       showToast(`Recipient name set to ${name}`, 'success');
-                      const greeting = `Hello, ${name}! A very warm welcome to Atonia. It is so wonderful to connect with you today. I'm Aria, and I'm right here by your side. What can I take care of for you today, ${name}?`;
+                      const greeting = `Hi, ${name}. I'm Atonia. What can I help you with today?`;
                       speakWarmly(greeting);
                     }}
                     className="px-2 py-0.5 rounded bg-surface hover:bg-surface-bright text-on-surface font-label-sm text-label-sm font-medium border border-surface-container-highest transition-colors cursor-pointer"
@@ -994,14 +1076,14 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
                   </span>
                 </div>
                 <span className="font-body-sm text-body-sm text-on-surface-variant">
-                  Aria addresses {currentRecipientName} warmly by name in every spoken response.
+                  Atonia will use {currentRecipientName}'s name naturally in conversation.
                 </span>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => {
-                  const greeting = `Hello, ${currentRecipientName}! A very warm welcome to Atonia. It is so wonderful to connect with you today. I'm Aria, and I'm right here by your side. What can I take care of for you today, ${currentRecipientName}?`;
+                  const greeting = `Hi, ${currentRecipientName}. I'm Atonia. What can I help you with today?`;
                   speakWarmly(greeting);
                 }}
                 className="px-3 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-bright text-primary font-label-sm text-label-sm font-semibold flex items-center gap-1.5 border border-primary/30 transition-all shadow-sm cursor-pointer"
@@ -1013,11 +1095,11 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
                 onClick={() => {
                   setCurrentRecipientName('');
                   showToast('Cleared recipient name to test welcome & ask for name flow', 'info');
-                  const welcomeText = `Hello and a very warm welcome to Atonia! It is so wonderful to connect with you today. I'm Aria, your sovereign AI voice specialist. May I ask what your name is, so I can address you personally throughout our conversation?`;
+                  const welcomeText = `Hi, welcome to Atonia. I'm Atonia, your voice assistant. What name would you like me to use?`;
                   speakWarmly(welcomeText);
                 }}
                 className="px-2.5 py-1.5 rounded-lg bg-surface-container text-outline hover:text-on-surface hover:bg-surface-container-high font-label-sm text-label-sm transition-colors border border-surface-container-high/40 flex items-center gap-1 cursor-pointer"
-                title="Clear name to test unknown caller flow where Aria asks for name"
+                title="Clear name to test unknown caller flow where Atonia asks for name"
               >
                 <span className="material-symbols-outlined text-[14px]">refresh</span>
                 <span>Test "Ask Name" Flow</span>
@@ -1122,7 +1204,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
             <span className="material-symbols-outlined text-[18px] text-primary animate-spin">
               progress_activity
             </span>
-            <span>Aria is synthesizing warm spoken response...</span>
+            <span>Atonia is synthesizing spoken response...</span>
           </div>
         )}
 
@@ -1133,7 +1215,7 @@ export const RealLifeVoicePanel: React.FC<RealLifeVoicePanelProps> = ({
       <div className="px-space-md py-2 bg-surface-container-low border-t border-surface-container-high/40 flex items-center gap-1.5 overflow-x-auto">
         <span className="font-label-sm text-label-sm text-outline flex items-center gap-1 flex-shrink-0 pr-1">
           <span className="material-symbols-outlined text-[14px]">tips_and_updates</span>
-          Ask Aria:
+          Ask Atonia:
         </span>
         {samplePrompts.map((p, idx) => (
           <button

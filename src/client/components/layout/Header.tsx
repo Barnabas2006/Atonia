@@ -109,10 +109,10 @@ export const Header: React.FC = () => {
           <button
             onClick={() => {
               setCurrentRoute('voice');
-              showToast('Connecting to Aria (Warm Female Voice Agent)...', 'success');
+              showToast('Connecting to Atonia voice assistant...', 'success');
             }}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gradient-to-r from-primary/20 via-tertiary/20 to-primary/20 hover:from-primary/30 hover:to-tertiary/30 border border-primary/40 text-on-surface font-label-sm text-label-sm transition-all shadow-sm group"
-            title="Open Live Voice Call with Aria"
+            title="Open Live Voice Call with Atonia"
           >
             <span className="flex h-2 w-2 relative">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-tertiary opacity-75"></span>
@@ -121,7 +121,7 @@ export const Header: React.FC = () => {
             <span className="material-symbols-outlined text-[16px] text-tertiary group-hover:scale-110 transition-transform">
               record_voice_over
             </span>
-            <span className="font-semibold text-primary">Live Voice (Aria)</span>
+            <span className="font-semibold text-primary">Live Voice (Atonia)</span>
           </button>
 
           <div className="hidden md:flex items-center gap-1.5 px-2 py-1 rounded bg-surface-container-low border border-surface-container-high/40">

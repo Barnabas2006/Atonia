@@ -52,7 +52,7 @@ export const VoicePage: React.FC = () => {
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-tertiary"></span>
               </span>
               <span className="font-telemetry-badge text-telemetry-badge text-tertiary uppercase tracking-widest font-semibold">
-                REAL-TIME VOICE AGENT ACTIVE // ARIA (WARM FEMALE VOICE)
+                VOICE ASSISTANT // ATONIA (WARM FEMALE VOICE)
               </span>
               <span className="px-2 py-0.5 rounded bg-surface-container-high text-on-surface-variant font-telemetry-mono text-telemetry-mono">
                 GEMINI 3.8 &amp; WEB SPEECH SYNTHESIS
@@ -60,7 +60,7 @@ export const VoicePage: React.FC = () => {
             </div>
             <h1 className="font-headline-lg text-headline-lg text-on-surface tracking-tight">Voice Agent Studio &amp; Telephony Ops</h1>
             <p className="font-body-sm text-body-sm text-on-surface-variant max-w-3xl">
-              Talk directly to Aria, our sovereign female voice AI with warm empathetic tone, or monitor the multi-tenant SIP telephony trunk fleet with supervisor intervention.
+              Talk directly to Atonia, our voice assistant, or monitor the multi-tenant SIP telephony trunk fleet with supervisor intervention.
             </p>
           </div>
 
@@ -75,7 +75,7 @@ export const VoicePage: React.FC = () => {
               }`}
             >
               <span className="material-symbols-outlined text-[18px]">record_voice_over</span>
-              <span>Live Voice Agent (Aria)</span>
+              <span>Live Voice Assistant (Atonia)</span>
               <span className="px-1.5 py-0.2 rounded-full bg-tertiary text-on-tertiary text-[10px] uppercase font-bold animate-pulse">
                 Live
               </span>
@@ -193,12 +193,12 @@ export const VoicePage: React.FC = () => {
                 <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-primary/50 flex-shrink-0">
                   <img
                     src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&q=80"
-                    alt="Aria Voice Agent"
+                    alt="Atonia Voice Assistant"
                     className="w-full h-full object-cover"
                   />
                 </div>
                 <div className="flex flex-col">
-                  <span className="font-headline-sm text-headline-sm text-on-surface">Aria // Voice Specialist</span>
+                  <span className="font-headline-sm text-headline-sm text-on-surface">Atonia // Voice Assistant</span>
                   <span className="font-body-sm text-body-sm text-tertiary font-medium">
                     Warm, Caring &amp; Ultra-Empathetic
                   </span>
@@ -206,7 +206,7 @@ export const VoicePage: React.FC = () => {
               </div>
 
               <p className="font-body-sm text-body-sm text-on-surface-variant mt-1 leading-relaxed">
-                Aria is tuned with high feminine warmth, natural conversational pauses, and deep contextual knowledge across all 4 Atonia operational domains.
+                Atonia uses a warm voice, natural conversational pacing, and business-specific context across the Atonia operational domains.
               </p>
 
               <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-surface-container-high/30">
@@ -236,7 +236,7 @@ export const VoicePage: React.FC = () => {
                 <span className="material-symbols-outlined text-[18px] text-primary">auto_awesome</span>
               </div>
               <p className="font-body-sm text-body-sm text-on-surface-variant">
-                You can ask Aria literally <strong>any question</strong> aloud or typed. Here are domains she handles natively:
+                You can ask Atonia questions aloud or by text. The assistant can help with these business domains:
               </p>
               <div className="flex flex-col gap-2 mt-1">
                 <div className="p-2.5 rounded-lg bg-surface-container-lowest border border-surface-container-high/30 flex items-start gap-2">

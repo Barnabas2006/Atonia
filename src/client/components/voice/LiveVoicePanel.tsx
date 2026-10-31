@@ -10,7 +10,7 @@ interface LiveVoicePanelProps {
 
 interface TranscriptTurn {
   id: string;
-  speaker: 'user' | 'elena';
+  speaker: 'user' | 'agent';
   text: string;
   time: string;
   latencyMs?: number;
@@ -28,8 +28,8 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
   const [transcripts, setTranscripts] = useState<TranscriptTurn[]>([
     {
       id: 'turn-0',
-      speaker: 'elena',
-      text: "Hello! I'm Elena, your customer service voice specialist. My voice is right here with you, and I can answer any question you have today. What's on your mind?",
+      speaker: 'agent',
+      text: "Hello! I'm Atonia, your customer service voice assistant. I can answer your questions and help with your request. What's on your mind?",
       time: 'Just now'
     }
   ]);
@@ -139,7 +139,7 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
 
     // Play greeting voice once on mount
     playWarmVoice(
-      "Hello! I'm Elena, your customer service voice specialist. My voice is right here with you, and I can answer any question you have today. What's on your mind?"
+      "Hello! I'm Atonia, your customer service voice assistant. I can answer your questions and help with your request. What's on your mind?"
     );
 
     return () => {
@@ -206,26 +206,18 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
 
     // Pick warm female voice
     const voices = window.speechSynthesis.getVoices();
-    const warmFemaleVoice = voices.find(
+    const warmVoice = voices.find(
       (v) =>
-        (v.name.includes('Google UK English Female') ||
-          v.name.includes('Female') ||
-          v.name.includes('Samantha') ||
-          v.name.includes('Victoria') ||
-          v.name.includes('Karen') ||
-          v.name.includes('Moira') ||
-          v.name.includes('Zira') ||
-          v.name.includes('Natural')) &&
+        /(google uk english female|female|samantha|victoria|karen|moira|zira|natural)/i.test(v.name) &&
         v.lang.startsWith('en')
     ) || voices.find((v) => v.lang.startsWith('en'));
 
-    if (warmFemaleVoice) {
-      utterance.voice = warmFemaleVoice;
+    if (warmVoice) {
+      utterance.voice = warmVoice;
     }
 
-    // Warm, soothing speech parameters
-    utterance.pitch = 1.08; // slightly higher feminine pitch
-    utterance.rate = 0.95;  // gentle, warm pacing
+    utterance.pitch = 1.0;
+    utterance.rate = 0.94;
 
     utterance.onend = () => {
       setCallState('connected');
@@ -263,8 +255,8 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
 
       if (response?.text) {
         const elenaTurn: TranscriptTurn = {
-          id: `elena-${Date.now()}`,
-          speaker: 'elena',
+          id: `agent-${Date.now()}`,
+          speaker: 'agent',
           text: response.text,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           latencyMs: response.latencyMs
@@ -277,8 +269,8 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
       console.error('Error answering voice question:', err);
       const fallbackText = "I heard you clearly, and I'm right here with you. Let me check our verified records and take care of this for you immediately.";
       const elenaTurn: TranscriptTurn = {
-        id: `elena-${Date.now()}`,
-        speaker: 'elena',
+        id: `agent-${Date.now()}`,
+        speaker: 'agent',
         text: fallbackText,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
@@ -294,7 +286,7 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
         recognitionRef.current?.start();
         setIsListeningActive(true);
       } catch (_) {}
-      showToast('Microphone unmuted. Elena is listening!', 'info');
+      showToast('Microphone unmuted. Atonia is listening!', 'info');
     } else {
       setIsMuted(true);
       try {
@@ -326,7 +318,7 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
       } catch (_) {}
     }
     setCallState('idle');
-    showToast('Call ended. Thank you for speaking with Elena.', 'info');
+    showToast('Call ended. Thank you for speaking with Atonia.', 'info');
     if (onClose) onClose();
   };
 
@@ -350,7 +342,7 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
         <div className="flex items-center gap-space-sm">
           <div className="relative">
             <img
-              alt="Elena Voice Specialist"
+              alt="Atonia Voice Assistant"
               className="w-12 h-12 rounded-full object-cover ring-2 ring-primary shadow-lg"
               src="https://lh3.googleusercontent.com/aida-public/AB6AXuD-GQz6_qFo1mpN8KN0O92az5t45MIBvghtd1Z90CWz_QBoVqrMKK76l-fJees5jYn97Ldt3PvuHxR_3wnpGFGrOQsnvGE0lpKFd3bTjf074ZCUUTht6U2qQ9Y196U7tdrKTkoQQVlfT-Y3dwJ2zBYfosCpJGylg1dfDFMJPNRqMPEVyivveSeWlyvz9t2g-Gr4IfstAMTkhnVX-04qW-h7KpTSBUNG-OqfJhXjFEdqdcprHu7Ob_7uVQ"
             />
@@ -359,7 +351,7 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
 
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
-              <span className="font-headline-md text-headline-md text-on-surface">Elena</span>
+              <span className="font-headline-md text-headline-md text-on-surface">Atonia</span>
               <span className="px-2 py-0.5 rounded bg-tertiary-container/20 text-tertiary font-telemetry-badge uppercase">
                 Warm Female Voice (Kore)
               </span>
@@ -388,7 +380,7 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
             ></span>
             <span className="capitalize font-telemetry-mono text-on-surface">
               {callState === 'speaking'
-                ? 'Elena Speaking...'
+                ? 'Atonia Speaking...'
                 : callState === 'listening'
                 ? 'Listening to You...'
                 : 'Connected'}
@@ -450,7 +442,7 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
                   turn.speaker === 'user' ? 'text-on-surface' : 'text-primary'
                 }`}
               >
-                {turn.speaker === 'user' ? 'You (Caller)' : 'Elena (Warm Voice)'}
+                {turn.speaker === 'user' ? 'You (Caller)' : 'Atonia (Warm Voice)'}
               </span>
               <span className="font-telemetry-mono text-[10px] text-outline">{turn.time}</span>
               {turn.latencyMs && (
@@ -490,7 +482,7 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ onClose, isFloat
       {/* Suggested Quick Question Chips */}
       <div className="px-space-md py-2 bg-surface-container-low border-t border-surface-container-high/30">
         <span className="text-[11px] font-telemetry-badge text-outline uppercase block mb-1.5">
-          Ask Elena Anything (Click to ask aloud):
+          Ask Atonia Anything (Click to ask aloud):
         </span>
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
           {quickPrompts.map((prompt, idx) => (
